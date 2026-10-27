@@ -1,4 +1,6 @@
-<img width="414" height="192" alt="green-reference" src="https://github.com/user-attachments/assets/d7a3b62c-2b8f-4c89-82a2-c3951f5d9e7b" />
+<img width="1500" height="692" alt="particle-one-working-example" src="https://github.com/user-attachments/assets/ee59df90-513b-4a7f-bfac-753e09fa13f7" />
+
+
 
 
 # Particle
