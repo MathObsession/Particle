@@ -1,6 +1,7 @@
 import SwiftUI
 import AppKit
 import ParticleOneCore
+import ParticleDesktopProtocol
 import TurboFieldfareMacPresentation
 
 struct ParticleOneSettings: View {
@@ -23,8 +24,11 @@ struct ParticleOneSettings: View {
                         settingRow("Appearance"){Picker("Appearance",selection:$value.appearance){ForEach(AppAppearance.allCases,id:\.self){Text($0.title).tag($0)}}.labelsHidden().pickerStyle(.segmented).frame(width:260)}
                     }
                     section("Responses"){
-                        Picker("Thinking",selection:$value.responseStyle){ForEach(ResponseStyle.allCases,id:\.self){Text($0.title).tag($0)}}.pickerStyle(.segmented).labelsHidden()
-                        Text("Direct answers starts after an empty thinking block and enforces a zero-token thinking budget. Brief thinking allows up to 64 reasoning tokens. Full thinking uses the model’s original behavior. Hard questions may benefit from thinking.").font(Design.body(10)).lineSpacing(4).foregroundStyle(Design.muted)
+                        Text("Chat").font(Design.medium(11))
+                        Picker("Chat response mode",selection:$value.responseStyle){ForEach(ResponseStyle.allCases,id:\.self){Text($0.title).tag($0)}}.pickerStyle(.segmented).labelsHidden()
+                        Text("Code").font(Design.medium(11))
+                        Picker("Code response mode",selection:$value.codeResponseStyle){ForEach(ResponseStyle.allCases,id:\.self){Text($0.title).tag($0)}}.pickerStyle(.segmented).labelsHidden()
+                        Text("Instant skips reasoning using an empty thinking prefix and a zero-token reasoning budget. Thinking allows up to 64 reasoning tokens; Thinking · extended uses the model’s original behavior. Chat and Code remember their modes separately.").font(Design.body(10)).lineSpacing(4).foregroundStyle(Design.muted)
                     }.disabled(model.busy || model.loading)
                     section("Your model"){
                         HStack{ParticleMark(size:42);VStack(alignment:.leading,spacing:4){Text(model.codeMode ? "Churo Code" : "Churo Chat").font(Design.medium(14));Text("4-bit · runs on your Mac").font(Design.body(10)).foregroundStyle(Design.muted)};Spacer();if model.connected{Button("Unload"){model.unload()}.disabled(model.busy)}}
@@ -36,9 +40,9 @@ struct ParticleOneSettings: View {
                         Text(value.activeExperts==6 ? "The original model’s expert selection." : "Experimental: uses fewer experts for speed. Answers can change; measured quality loss varies by task.").font(Design.body(10)).foregroundStyle(Design.muted)
                         settingRow("RAM expert slots") {Stepper("\(value.slots)",value:$value.slots,in:6...16).font(Design.mono(12)).frame(width:105)}
                         Text(String(format:"Expert buffers: about %.2f GiB. More slots may reduce disk reads; leave room for macOS.",Double(value.slots)*0.1267)).font(Design.body(10)).foregroundStyle(Design.muted)
-                        settingRow("Conversation capacity") {Picker("Conversation capacity",selection:$value.context){ForEach([512,1024,2048,4096,8192],id:\.self){Text("\($0) tokens").tag($0)}}.labelsHidden().frame(width:160)}
-                        settingRow("Response allowance") {Picker("Response allowance",selection:$value.maxNew){ForEach([128,256,512,768,1024,2048,4096],id:\.self){Text("\($0) tokens").tag($0)}}.labelsHidden().frame(width:160)}
-                        Text("The response allowance is capped at half the chosen capacity. Earlier turns are retained; you’ll be told when the conversation is full.").font(Design.body(10)).foregroundStyle(Design.muted)
+                        settingRow("Conversation capacity") {Picker("Conversation capacity",selection:$value.context){ForEach(contextChoices,id:\.self){Text("\($0) tokens").tag($0)}}.labelsHidden().frame(width:160)}
+                        settingRow("Response allowance") {Picker("Response allowance",selection:$value.maxNew){ForEach(outputChoices,id:\.self){Text("\($0) tokens").tag($0)}}.labelsHidden().frame(width:160)}
+                        Text(String(format:"FP32 conversation memory: %.2f GiB. This Mac supports up to %d tokens. Input and output share this capacity; the full response allowance is reserved before a turn. Earlier turns are retained. Longer context takes more time to read.",Double(ParticleContextPolicy.kvBytes(context:value.context))/1_073_741_824,ParticleContextPolicy.maximum())).font(Design.body(10)).foregroundStyle(Design.muted)
                         Toggle("Use the prepared SSD mirror when available",isOn:$value.useMirror).font(Design.body(11))
                     }.disabled(model.busy || model.loading)
                     section("Custom system prompt"){
@@ -62,8 +66,12 @@ struct ParticleOneSettings: View {
                     Text("Particle \(model.updates.currentVersion) · Made in India.\nPT Serif, Poppins & Space Mono are bundled under the SIL Open Font License. Model distribution: Apache 2.0.").font(Design.body(9)).lineSpacing(5).foregroundStyle(Design.muted)
                 }.padding(28)
             }
+        }.onChange(of:value.context){_,capacity in
+            if value.maxNew > capacity-512{value.maxNew=min(16_384,capacity/2)}
         }.frame(width:700,height:760).background(Design.paper).foregroundStyle(Design.ink).preferredColorScheme(value.appearance.colorScheme)
     }
+    private var outputChoices:[Int]{Array(Set([128,256,512,768,1024,2048,4096,8192,16_384,32_768,65_536].filter{$0<value.context}+[value.maxNew])).sorted()}
+    private var contextChoices:[Int]{Array(Set(ParticleContextPolicy.available()+[value.context])).sorted()}
     private func section<Content: View>(_ title: String,@ViewBuilder content: ()->Content)->some View {VStack(alignment:.leading,spacing:12){Text(title).font(Design.heading(20));content()}}
     private func settingRow<Content: View>(_ title: String,@ViewBuilder content: ()->Content)->some View {HStack{Text(title).font(Design.body(12));Spacer();content()}}
 }

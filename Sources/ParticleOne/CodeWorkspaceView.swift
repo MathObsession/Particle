@@ -113,7 +113,13 @@ struct CodeWorkspaceView:View {
                     Menu{Button("Build — implement and verify"){code.planOnly=false};Button("Plan — explore without changes"){code.planOnly=true}}label:{Label(code.planOnly ? "Plan" : "Build",systemImage:code.planOnly ? "map" : "hammer").font(Design.body(11))}.menuStyle(.borderlessButton).fixedSize().disabled(code.active)
                     Button{permissions.toggle()}label:{Label(code.allowProjectEdits ? "Edits allowed" : "Review edits",systemImage:"checkmark.shield").font(Design.body(10))}.buttonStyle(HitButtonStyle()).foregroundStyle(Design.muted)
                     Spacer()
-                    Text("Churo Code").font(Design.medium(11)).foregroundStyle(Design.muted)
+                    Button{model.setThinkingEnabled(!model.thinkingEnabled)}label:{
+                        Label(model.thinkingEnabled ? "Thinking" : "Instant",systemImage:model.thinkingEnabled ? "sparkle" : "bolt")
+                            .font(Design.medium(11)).padding(.horizontal,10).frame(height:32)
+                            .background(Design.green.opacity(model.thinkingEnabled ? 0.12 : 0.05),in:Capsule()).contentShape(Capsule())
+                    }.buttonStyle(.plain).foregroundStyle(Design.green).disabled(code.active || model.busy || model.loading)
+                        .accessibilityLabel("Code response mode").accessibilityValue(model.thinkingEnabled ? "Thinking" : "Instant")
+                        .help("Switch between Instant tool calls and Thinking. Applies to the next task.")
                     if code.active{Button{code.stop()}label:{Image(systemName:"stop.fill").frame(width:24,height:24)}.buttonStyle(WashedButtonStyle(compact:true)).accessibilityLabel("Stop agent")}
                     else{Button{run()}label:{Image(systemName:model.connected ? "arrow.up" : "power").font(.system(size:15,weight:.medium)).frame(width:24,height:24)}.buttonStyle(WashedButtonStyle(compact:true)).help(model.connected ? "Run task" : "Load Churo Code").accessibilityLabel(model.connected ? "Run task" : "Load Churo Code").keyboardShortcut(.return,modifiers:.command).disabled(model.loading || (model.connected && code.draft.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty))}
                 }
@@ -210,7 +216,7 @@ struct CodeAssistantReply:View {
             HStack(spacing:8){ParticleMark(size:21);Text("Churo Code").font(Design.heading(18))}
             ForEach(TranscriptParser.parse(entry.text)){block in
                 switch block.kind{
-                case .thinking:EmptyView()
+                case .thinking:DisclosureGroup{MarkdownContent(source:block.text,compact:true)}label:{Label("Thinking",systemImage:"sparkle").font(Design.body(11)).foregroundStyle(Design.muted)}
                 case .text:MarkdownContent(source:block.text)
                 case .code:
                     if collapseCode{DisclosureGroup{CodeCard(code:block.text,language:block.language).padding(.top,10)}label:{Label("Code · view if needed",systemImage:"chevron.left.forwardslash.chevron.right").font(Design.body(11)).foregroundStyle(Design.muted)}}
@@ -227,6 +233,7 @@ struct CodeStreamPreview:View {
     private var visible:String{TranscriptParser.parse(text).compactMap{block -> String? in if case .text=block.kind{return block.text};return nil}.joined(separator:"\n")}
     var body:some View {
         VStack(alignment:.leading,spacing:8){
+            if text.contains("<think>"),!text.contains("</think>"){Label("Thinking…",systemImage:"sparkle").font(Design.body(10)).foregroundStyle(Design.muted)}
             if !visible.isEmpty{MarkdownContent(source:String(visible.suffix(2200)))}
             if text.contains("```"){Label("Preparing code · changes appear in the editor",systemImage:"chevron.left.forwardslash.chevron.right").font(Design.body(10)).foregroundStyle(Design.muted)}
         }

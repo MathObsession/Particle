@@ -215,12 +215,12 @@ struct ParticleOneRootView: View {
     private func beginEditing(_ message:ChatMessage){guard let id=model.state.selected else{return};editingRequest=MessageEditRequest(conversationID:id,message:message)}
     private var thinkingToggle:some View {
         Button{model.setThinkingEnabled(!model.thinkingEnabled)}label:{
-            HStack(spacing:6){Image(systemName:"sparkle");Text("Thinking");Text(model.thinkingEnabled ? "On" : "Off").font(Design.medium(9))}
+            HStack(spacing:6){Image(systemName:model.thinkingEnabled ? "sparkle" : "bolt");Text(model.thinkingEnabled ? "Thinking" : "Instant")}
                 .font(Design.medium(11)).foregroundStyle(model.thinkingEnabled ? Design.green : Design.muted)
                 .padding(.horizontal,11).frame(height:34).background(model.thinkingEnabled ? Design.green.opacity(0.12) : Design.line.opacity(0.24),in:Capsule()).contentShape(Capsule())
         }.buttonStyle(.plain).disabled(model.busy || model.loading)
-            .accessibilityLabel("Thinking").accessibilityValue(model.thinkingEnabled ? "On" : "Off")
-            .help(model.busy || model.loading ? "Wait for this response or stop it before changing thinking." : "Applies to the next reply. On enables brief thinking; Off gives direct answers.")
+            .accessibilityLabel("Response mode").accessibilityValue(model.thinkingEnabled ? "Thinking" : "Instant")
+            .help(model.busy || model.loading ? "Wait for this response or stop it before changing thinking." : "Switch between Instant answers and Thinking for the next reply.")
     }
     private var sendControl:some View {
         Group {
@@ -279,7 +279,7 @@ struct AssistantMessageView: View {
             }
             if message.finish=="length" {Text("The response reached its output limit. You can continue the conversation or adjust the limit in Settings.").font(Design.body(10)).foregroundStyle(Design.muted)}
             if message.finish=="cancelled" {Text("Stopped · this unfinished reply is not added to model history.").font(Design.body(10)).foregroundStyle(Design.muted)}
-            if message.finish=="reasoning_limit" {Text("The model tried to restart thinking repeatedly, so this reply was stopped. Try rephrasing or select Brief thinking in Settings.").font(Design.body(10)).foregroundStyle(Design.muted)}
+            if message.finish=="reasoning_limit" {Text("The model tried to restart thinking repeatedly, so this reply was stopped. Try rephrasing or select Thinking in Settings.").font(Design.body(10)).foregroundStyle(Design.muted)}
             if message.complete || message.finish != nil {ResponseFooter(metrics:message.metrics)}
         }.frame(maxWidth:.infinity,alignment:.leading)
     }

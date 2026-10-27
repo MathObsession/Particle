@@ -147,7 +147,7 @@ private final class DesktopPipeReader: @unchecked Sendable {
         let old=state.settings
         state.settings=value;persist()
         // Appearance and memory preferences never require reading model weights.
-        var engineOld=old;engineOld.appearance=value.appearance;engineOld.rememberPersonalDetails=value.rememberPersonalDetails;engineOld.system=value.system;engineOld.responseStyle=value.responseStyle
+        var engineOld=old;engineOld.appearance=value.appearance;engineOld.rememberPersonalDetails=value.rememberPersonalDetails;engineOld.system=value.system;engineOld.responseStyle=value.responseStyle;engineOld.codeResponseStyle=value.codeResponseStyle
         if engineOld != value && connected {reloadWorker()}
         else if (old.system != value.system || old.responseStyle != value.responseStyle) && connected {restoreSelected()}
     }
@@ -155,10 +155,10 @@ private final class DesktopPipeReader: @unchecked Sendable {
     func toggleSidebar(){setSidebarExpanded(state.sidebarHidden)}
     func setSidebarExpanded(_ expanded:Bool){guard state.sidebarHidden==expanded else{return};state.sidebarHidden = !expanded;persist()}
     var modelProcessID:Int32? {worker?.isRunning==true ? worker?.processIdentifier : nil}
-    var thinkingEnabled:Bool {settings.responseStyle != .direct}
+    var thinkingEnabled:Bool {(codeMode ? settings.codeResponseStyle : settings.responseStyle) != .direct}
     func setThinkingEnabled(_ enabled:Bool){
         guard !busy,!loading,enabled != thinkingEnabled else{return}
-        var value=settings;value.responseStyle=enabled ? .brief : .direct;updateSettings(value)
+        var value=settings;if codeMode{value.codeResponseStyle=enabled ? .brief : .direct}else{value.responseStyle=enabled ? .brief : .direct};updateSettings(value)
     }
     func setUsername(_ name:String){let clean=name.trimmingCharacters(in:.whitespacesAndNewlines);guard !clean.isEmpty,clean.count<=80 else{return};state.username=clean;persist()}
     func setCodeMode(_ enabled:Bool){guard !busy,!loading else{return};codeMode=enabled;if enabled{code.restoreSelection()}else{restoreSelected()}}
@@ -218,6 +218,7 @@ private final class DesktopPipeReader: @unchecked Sendable {
     }
     func loadModel() {
         guard !loading,!connected,worker==nil,!preview else{return}
+        guard settings.context<=ParticleContextPolicy.maximum() else{notice="This Mac supports up to \(ParticleContextPolicy.maximum()) context tokens. Choose a smaller conversation capacity in Settings; your saved messages are retained.";return}
         guard Self.modelExists(settings.modelPath) else { showSetup=true;return }
         let override=ProcessInfo.processInfo.environment["PARTICLEONE_ENGINE_PATH"]
         let bundled=Bundle.main.bundleURL.appendingPathComponent("Contents/MacOS/ParticleCLI")

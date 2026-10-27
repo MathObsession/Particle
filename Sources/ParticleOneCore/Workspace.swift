@@ -54,7 +54,7 @@ public enum AppAppearance: String, Codable, CaseIterable, Sendable {
 }
 public enum ResponseStyle: String, Codable, CaseIterable, Sendable {
     case direct, brief, thorough
-    public var title: String { switch self { case .direct:"Direct answers";case .brief:"Brief thinking";case .thorough:"Full thinking" } }
+    public var title: String { switch self { case .direct:"Instant";case .brief:"Thinking";case .thorough:"Thinking · extended" } }
     public var budget: Int { switch self { case .direct:0;case .brief:64;case .thorough:-1 } }
 }
 public enum LocalUsername {
@@ -88,16 +88,18 @@ public enum PersonalMemory {
 public struct OneSettings: Codable, Sendable, Equatable {
     public var modelPath=FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/ParticleOne/Models/churo-chat.particle").path
     public var slots=12
-    public var context=2048
-    public var maxNew=768
+    public var context=ParticleContextPolicy.recommended()
+    public var maxNew=ParticleContextPolicy.defaultOutput
     public var activeExperts=6
     public var useMirror=true
     public var system="Respond in English unless the user explicitly requests another language. Treat greetings such as hi and hello as English."
     public var responseStyle=ResponseStyle.direct
+    public var codeResponseStyle=ResponseStyle.direct
+    public var contextPolicyVersion=1
     public var appearance=AppAppearance.system
     public var rememberPersonalDetails=false
     public init() {}
-    private enum CodingKeys: String,CodingKey {case modelPath,slots,context,maxNew,activeExperts,useMirror,system,responseStyle,appearance,rememberPersonalDetails}
+    private enum CodingKeys: String,CodingKey {case modelPath,slots,context,maxNew,activeExperts,useMirror,system,responseStyle,codeResponseStyle,contextPolicyVersion,appearance,rememberPersonalDetails}
     public init(from decoder: Decoder) throws {
         self.init();let c=try decoder.container(keyedBy:CodingKeys.self)
         modelPath=try c.decodeIfPresent(String.self,forKey:.modelPath) ?? modelPath
@@ -108,19 +110,27 @@ public struct OneSettings: Codable, Sendable, Equatable {
         useMirror=try c.decodeIfPresent(Bool.self,forKey:.useMirror) ?? useMirror
         system=try c.decodeIfPresent(String.self,forKey:.system) ?? system
         responseStyle=try c.decodeIfPresent(ResponseStyle.self,forKey:.responseStyle) ?? responseStyle
+        codeResponseStyle=try c.decodeIfPresent(ResponseStyle.self,forKey:.codeResponseStyle) ?? .direct
+        let savedPolicy=try c.decodeIfPresent(Int.self,forKey:.contextPolicyVersion) ?? 0
+        if savedPolicy < 1 {
+            // One-time upgrade; preserve subsequent deliberate small settings.
+            context=max(context,ParticleContextPolicy.recommended())
+            maxNew=max(maxNew,ParticleContextPolicy.defaultOutput)
+        }
+        contextPolicyVersion=1
         appearance=try c.decodeIfPresent(AppAppearance.self,forKey:.appearance) ?? appearance
         rememberPersonalDetails=try c.decodeIfPresent(Bool.self,forKey:.rememberPersonalDetails) ?? false
     }
     public func arguments(systemOverride: String? = nil) -> [String] {
         let receipt=FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Caches/Particle/Experts/mirror-v1/mirror-receipt.json")
         let mirror=useMirror && modelPath.hasSuffix(".particle") && FileManager.default.fileExists(atPath:receipt.path)
-        var args=["--model",modelPath,"--interactive","--desktop-events","--reasoning-budget",String(responseStyle.budget),"--max-context",String(context),"--max-new",String(min(maxNew,context/2)),"--expert-cache-slots",String(slots),"--active-experts",String(activeExperts),"--system",systemOverride ?? system,"--attention","reference","--projection","vector","--deferred-decode","--grouped-experts","--ffn-vector","--cooperative-quant"]
+        var args=["--model",modelPath,"--interactive","--desktop-events","--reasoning-budget",String(responseStyle.budget),"--max-context",String(context),"--max-new",String(ParticleContextPolicy.outputAllowance(requested:maxNew,context:context)),"--expert-cache-slots",String(slots),"--active-experts",String(activeExperts),"--system",systemOverride ?? system,"--attention","reference","--projection","vector","--deferred-decode","--grouped-experts","--ffn-vector","--cooperative-quant"]
         if responseStyle != .direct {args += ["--thinking"]}
         if mirror { args += ["--storage-profile","sd-hybrid","--ssd-cache-policy","mirror","--ssd-cache-mib","18432","--mirror-read-hint","nocache","--pipelined-verification","--ssd-read-workers","2"] }
         else { args += ["--no-ssd-cache"] }
         return args
     }
-    public var valid: Bool { (6...16).contains(slots) && [512,1024,2048,4096,8192].contains(context) && (64...4096).contains(maxNew) && (2...6).contains(activeExperts) && system.utf8.count<=32_768 }
+    public var valid: Bool { (6...16).contains(slots) && ParticleContextPolicy.capacities.contains(context) && (64...ParticleContextPolicy.modelLimit).contains(maxNew) && (2...6).contains(activeExperts) && system.utf8.count<=32_768 }
 }
 public struct SavedWorkspace: Codable, Sendable {
     public var version=1

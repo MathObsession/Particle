@@ -49,9 +49,9 @@ private struct Options {
       --system <text>           Optional system guidance
       --raw                    Unframed text completion instead of instruction chat
       --thinking               Enable reasoning in the official chat template
-      --reasoning-budget <n>   Desktop thinking tokens: 0 direct, 64 brief, -1 native
+      --reasoning-budget <n>   Desktop reasoning: 0 Instant, 64 Thinking, -1 extended
       --max-new <n>            Output token limit (default 64)
-      --max-context <n>        Total token capacity, 32...8192 (default 2048)
+      --max-context <n>        Total input + output, 32...131072; memory-tier limited (default 2048)
       --expert-cache-slots <n> RAM expert slots per MoE layer, 6...16 (default 12)
                                Fewer: less RAM; more: may reduce disk reads
                                Expert buffers: 6 ~0.76, 8 ~1.01, 12 ~1.52, 16 ~2.03 GiB
@@ -194,7 +194,7 @@ private struct Options {
             }
             i += 1
         }
-        guard (1...8192).contains(maxNew), (32...8192).contains(context), (6...16).contains(slots), (1...256).contains(prefillChunk),
+        guard (1...ParticleContextPolicy.modelLimit).contains(maxNew), (32...ParticleContextPolicy.modelLimit).contains(context), (6...16).contains(slots), (1...256).contains(prefillChunk),
               (2...6).contains(execution.activeExperts), (1...18432).contains(cacheMiB), (1...128).contains(idlePrefillChunk), temperature >= 0, (1...262144).contains(topK), topP > 0, topP <= 1 else {
             throw ParticleError.invalid("Options out of range; see --help")
         }
@@ -292,7 +292,8 @@ private struct Options {
             for tensor in file.tensors.values { types[String(describing: tensor.type), default: 0] += 1 }
             let info: [String:Any] = ["path":file.path,"bytes":file.size,"architecture":"sarvam_moe","format":file.formatName,"layers":19,
                 "experts":128,"experts_per_token":6,"tensors":file.tensors.count,"quantization_types":types,
-                "context_limit_v1":8192,"model_position_limit":131072,
+                "context_limit_v1":ParticleContextPolicy.modelLimit,"model_position_limit":ParticleContextPolicy.modelLimit,
+                "system_context_limit":ParticleContextPolicy.maximum(),"kv_bytes_per_token":ParticleContextPolicy.kvBytesPerToken,
                 "embedding_access":"bounded packed row reads",
                 "mapped_common_bytes":file.tensors.values.filter { !$0.name.contains("_exps.weight") && $0.name != "token_embd.weight" }.reduce(0) { $0+$1.byteCount },
                 "tokenizer_directory":o.tokenizer ?? file.tokenizerDirectory,
@@ -419,7 +420,10 @@ private struct Options {
                         case "agent":
                             do {
                                 let history=try command.validatedAgentHistory()
-                                var agentOptions=o;agentOptions.maxNew=min(o.maxNew,1024);agentOptions.reasoningBudget=0;agentOptions.thinking=false
+                                var agentOptions=o
+                                agentOptions.reasoningBudget=command.reasoningBudget ?? 0
+                                agentOptions.thinking=agentOptions.reasoningBudget != 0
+                                let prefixCount=agentOptions.thinking ? 0 : 3
                                 var candidate=try history.map { message -> SarvamMessage in
                                     guard let role=SarvamMessage.Role(rawValue:message.role) else{throw ParticleError.invalid("Invalid agent role")}
                                     return SarvamMessage(role:role,content:message.content)
@@ -427,11 +431,11 @@ private struct Options {
                                 if let system=command.system {candidate.insert(SarvamMessage(role:.system,content:system),at:0)}
                                 cancellation.reset();cachedHistoricalPrefix=nil;pendingCanonical=nil
                                 let templateStart=ProcessInfo.processInfo.systemUptime
-                                let target=try tokenizer.agentChat(messages:candidate,tools:command.tools ?? [],thinking:false)
-                                let plan=try ParticlePromptReuse(committed:committed,target:target,context:o.context,outputAllowance:agentOptions.maxNew+3)
+                                let target=try tokenizer.agentChat(messages:candidate,tools:command.tools ?? [],thinking:agentOptions.thinking)
+                                let plan=try ParticlePromptReuse(committed:committed,target:target,context:o.context,outputAllowance:agentOptions.maxNew+prefixCount)
                                 let templateSeconds=ProcessInfo.processInfo.systemUptime-templateStart
-                                desktopEvent(["event":"agent_context","new_tokens":plan.suffix.count+3,"reused":plan.reused,"template_seconds":templateSeconds,"target_tokens":target.count])
-                                log("Particle agent: reusing \(plan.reused) KV tokens; processing \(plan.suffix.count+3) new tokens; template \(templateSeconds)s")
+                                desktopEvent(["event":"agent_context","new_tokens":plan.suffix.count+prefixCount,"reused":plan.reused,"template_seconds":templateSeconds,"target_tokens":target.count])
+                                log("Particle agent: reusing \(plan.reused) KV tokens; processing \(plan.suffix.count+prefixCount) new tokens; template \(templateSeconds)s")
                                 try runner.rewind(to:plan.reused)
                                 let result=try generate(agentOptions,tokenizer:tokenizer,runner:runner,cancellation:cancellation,ids:plan.suffix,loadSeconds:loadSeconds,reused:plan.reused,submitted:submitted,templateSeconds:templateSeconds,replayedHistory:0,historyClassificationKnown:false,cachedTemplateTokens:0)
                                 if result.usable {committed=target+result.forwarded}else{runner.reset();committed.removeAll()}
@@ -632,7 +636,7 @@ private struct Options {
         if o.desktop { if !tail.isEmpty { desktopEvent(["event":"text","text":tail]) } } else { FileHandle.standardOutput.write(Data((tail+"\n").utf8)) }
         let done = ProcessInfo.processInfo.systemUptime, metrics = runner.metrics
         let seconds = done-prefilled
-        if o.desktop { desktopEvent(["event":"turn","text":text,"finish":finish,"tokens":generated,"decode_steps":steps,"decode_seconds":seconds,"prefill_seconds":prefilled-loaded,"reused":reused,"context_used":runner.position,"active_experts":o.execution.activeExperts,"forced_thinking_closures":forcedClosures,"assistant_prefix_tokens":assistantPrefix.count]) }
+        if o.desktop { desktopEvent(["event":"turn","text":text,"finish":finish,"tokens":generated,"decode_steps":steps,"decode_seconds":seconds,"prefill_seconds":prefilled-loaded,"reused":reused,"context_used":runner.position,"active_experts":o.execution.activeExperts,"forced_thinking_closures":forcedClosures,"assistant_prefix_tokens":assistantPrefix.count,"context_limit":runner.maxContext,"output_limit":o.maxNew]) }
         log(String(format:"Particle: prompt=%d output=%d finish=%@ load=%.2fs prefill=%.2fs first_token=%.2fs decode=%.2fs",ids.count,generated,finish,loadSeconds,prefilled-loaded,firstToken,seconds))
         log(steps > 0 ? String(format:"Particle: decode_steps=%d decode_rate=%.3f tok/s",steps,Double(steps)/max(seconds,1e-9)) : "Particle: decode rate n/a (no post-prefill forward step)")
         log(String(format:"Particle: expert_reads=%.1f MiB cache_hits=%d cache_misses=%d peak_sampled_footprint=%.1f MiB",Double(metrics.expertReadBytes)/1048576,metrics.cacheHits,metrics.cacheMisses,Double(peak)/1048576))

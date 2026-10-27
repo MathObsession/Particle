@@ -2,6 +2,7 @@ import Foundation
 @preconcurrency import Metal
 import Darwin
 import ParticleGGUF
+import ParticleDesktopProtocol
 
 public final class ParticleCancellation: @unchecked Sendable {
     private let lock = NSLock()
@@ -88,10 +89,13 @@ public final class SarvamRunner {
     private var failed = false
     private var hasLogits = false
     public init(file: any ParticleModelSource, maxContext: Int = 2048, expertCacheSlots: Int = 12, ssdCacheDirectory: URL? = nil, ssdCacheBytes: Int = 4 * 1024 * 1024 * 1024, ssdCachePolicy: ParticleSSDCachePolicy = .victim, execution: ParticleExecutionOptions = .init()) throws {
-        guard (32...8192).contains(maxContext), (6...16).contains(expertCacheSlots) else {
-            throw ParticleError.invalid("This memory-bounded CLI requires context 32...8192 and expert slots 6...16")
+        guard (32...ParticleContextPolicy.modelLimit).contains(maxContext), (6...16).contains(expertCacheSlots) else {
+            throw ParticleError.invalid("Context must be 32...131072 and expert slots 6...16")
         }
         guard (2...6).contains(execution.activeExperts), [1,2,4].contains(execution.sourceWorkers), [1,2,4].contains(execution.ssdWorkers), [256,512].contains(execution.splitBlock) else { throw ParticleError.invalid("Invalid I/O workers or attention block") }
+        guard maxContext <= ParticleContextPolicy.maximum() else {
+            throw ParticleError.invalid("This Mac supports up to \(ParticleContextPolicy.maximum()) context tokens with FP32 KV. Choose a smaller conversation capacity.")
+        }
         self.execution = execution
         self.file = file; configuration = try SarvamConfiguration(file: file)
         self.maxContext = maxContext; cacheSlots = expertCacheSlots

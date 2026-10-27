@@ -89,3 +89,5 @@ Target hardware is M2 with 8 GB RAM. The temporary SD card can make cold reads v
 The inherited `TurboFieldfare*` app, server, CLI, and repacker remain Gemma-specific. Use **ParticleCLI** for Sarvam. Preserve the upstream licenses and [third-party notices](THIRD_PARTY_NOTICES.md).
 
 See [workspace setup](docs/WORKSPACE_SETUP.md), [codebase analysis](docs/CODEBASE_ANALYSIS.md), and [upstream documentation](UPSTREAM_README.md). Consult `AGENTS.md` before model-using tests or inference.
+
+Context capacity, 16K output allowances, and independent Instant/Thinking modes are documented in [Context and response modes](docs/particleone/CONTEXT_AND_MODES.md).

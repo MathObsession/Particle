@@ -196,7 +196,15 @@ import ParticleDesktopProtocol
         var codeSettings=model.settings;codeSettings.context=8192;model.updateSettings(codeSettings);_=await wait{model.connected && !model.loading}
         let chatHistory=model.selected?.history
         let agentPID=model.modelProcessID
-        model.setCodeMode(true);model.code.openProject(fixture);model.code.draft="agent-fixture";model.code.start()
+        model.setCodeMode(true)
+        model.setThinkingEnabled(true)
+        checks["code_thinking_independent"]=model.thinkingEnabled && model.settings.codeResponseStyle == .brief && model.settings.responseStyle == .direct
+        model.code.openProject(fixture);model.code.draft="agent-fixture";model.code.start()
+        checks["code_thinking_mid_run_blocked"]={model.setThinkingEnabled(false);return model.settings.codeResponseStyle == .brief}()
+        checks["code_thinking_budget_sent"]=await wait{
+            guard let text=try? String(contentsOf:model.directory.appendingPathComponent("commands.jsonl"),encoding:.utf8) else{return false}
+            return text.split(separator:"\n").contains{line in guard let command=try? JSONDecoder().decode(DesktopCommand.self,from:Data(line.utf8)) else{return false};return command.type=="agent" && command.reasoningBudget==64}
+        }
         checks["agent_edit_waits_approval"]=await wait{model.code.proposal != nil}
         checks["agent_file_unchanged_before_approval"]=(try? String(contentsOf:fixture.appendingPathComponent("main.txt"),encoding:.utf8))=="color=red\n"
         let editApproval=model.code.pending?.id
@@ -213,7 +221,13 @@ import ParticleDesktopProtocol
         checks["agent_chat_preserved"]=model.selected?.history==chatHistory
         checks["agent_native_tool_history"]=model.code.session?.history.filter{$0.role=="tool"}.count==3
         if let change=model.code.session?.changes.last{model.code.undo(change);checks["agent_undo"]=(try? String(contentsOf:fixture.appendingPathComponent("main.txt"),encoding:.utf8))=="color=red\n"}
+        model.setThinkingEnabled(false)
+        checks["code_instant_keeps_worker"]=model.settings.codeResponseStyle == .direct && model.modelProcessID==agentPID
         model.code.newSession();model.code.draft="agent-needs-verification";model.code.start()
+        checks["code_instant_budget_sent"]=await wait{
+            guard let text=try? String(contentsOf:model.directory.appendingPathComponent("commands.jsonl"),encoding:.utf8) else{return false}
+            return text.split(separator:"\n").contains{line in guard let command=try? JSONDecoder().decode(DesktopCommand.self,from:Data(line.utf8)) else{return false};return command.type=="agent" && command.reasoningBudget==0}
+        }
         checks["verification_edit_approval"]=await wait{model.code.proposal?.path=="verify.txt"}
         model.code.approve(model.code.pending?.id)
         checks["verification_prompts_for_run"]=await wait{model.code.pending?.call.name=="run_command"}

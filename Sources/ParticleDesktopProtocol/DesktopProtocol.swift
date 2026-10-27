@@ -28,7 +28,7 @@ public struct DesktopCommand: Codable, Sendable {
     }
     public func validatedAgentHistory() throws -> [DesktopMessage] {
         let history=messages ?? []
-        guard !history.isEmpty,history.count<=256,history.first?.role=="user",["user","tool"].contains(history.last?.role ?? ""),
+        guard reasoningBudget.map({(-1...4096).contains($0)}) ?? true, !history.isEmpty,history.count<=256,history.first?.role=="user",["user","tool"].contains(history.last?.role ?? ""),
               history.allSatisfy({["user","assistant","tool"].contains($0.role)}),
               history.reduce(0,{$0+$1.content.utf8.count})<=900_000,(system?.utf8.count ?? 0)<=65_536,
               let tools,!tools.isEmpty,tools.count<=16,Set(tools.map(\.name)).count==tools.count,

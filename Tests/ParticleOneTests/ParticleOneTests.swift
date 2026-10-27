@@ -44,7 +44,7 @@ import ParticleDesktopProtocol
     }
     @Test func defaultProfileAndBoundedOutputAreHonest() {
         var settings=OneSettings();#expect(settings.activeExperts==6);settings.context=512;settings.maxNew=4096
-        let arguments=settings.arguments();let index=arguments.firstIndex(of:"--max-new")!;#expect(arguments[index+1]=="256")
+        let arguments=settings.arguments();let index=arguments.firstIndex(of:"--max-new")!;#expect(arguments[index+1]=="480")
         #expect(arguments.contains("--desktop-events"));#expect(!arguments.contains("--thinking"))
     }
 }

@@ -7,7 +7,7 @@ import argparse,hashlib,json,os,plistlib,shutil,subprocess,tempfile,datetime,bas
 from urllib.parse import urlparse
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[2]
-p=argparse.ArgumentParser(description=__doc__);p.add_argument('--bin',type=Path,required=True);p.add_argument('--output',type=Path,default=ROOT/'dist');p.add_argument('--version',default='0.3.1');p.add_argument('--build-number');p.add_argument('--release-url');p.add_argument('--homepage',default='https://huggingface.co/MathObsession');p.add_argument('--identity',default='-');p.add_argument('--update-feed');p.add_argument('--update-public-key');a=p.parse_args()
+p=argparse.ArgumentParser(description=__doc__);p.add_argument('--bin',type=Path,required=True);p.add_argument('--output',type=Path,default=ROOT/'dist');p.add_argument('--version',default='0.3.2');p.add_argument('--build-number');p.add_argument('--release-url');p.add_argument('--homepage',default='https://huggingface.co/MathObsession');p.add_argument('--identity',default='-');p.add_argument('--update-feed');p.add_argument('--update-public-key');a=p.parse_args()
 if not a.build_number:a.build_number=datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%d%H%M%S')
 channel=json.loads((ROOT/'Scripts/particleone/update-channel.json').read_text())
 feed=a.update_feed or channel['feed_url'];public_key=a.update_public_key or channel['public_key']

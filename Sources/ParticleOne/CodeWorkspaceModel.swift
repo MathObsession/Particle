@@ -82,14 +82,15 @@ import ParticleDesktopProtocol
     func flushDraft(){mutate{session in session.composerDraft=draft;session.editorDraftFile=editor != editorSaved ? selectedFile : nil;session.editorDraftText=editor != editorSaved ? editor : nil;session.editorBaseHash=editor != editorSaved ? AgentProject.hash(Data(editorSaved.utf8)) : nil}}
     func discardEditor(){editor=editorSaved;editorConflict=false;flushDraft()}
     func undo(_ change:AgentChange){guard !active,let project else{return};do{try project.apply(change,undo:true);mutate{if let index=$0.changes.firstIndex(where:{$0.id==change.id}){$0.changes[index].undone=true};$0.events.append(AgentEvent(.init(name:"edit_file",arguments:["path":change.path]),status:"done",output:"Undid the reviewed change; previous checks describe the earlier file state."))};if selectedFile==change.path{editor=change.before ?? "";editorSaved=editor};refreshFiles()}catch{self.error=error.localizedDescription}}
-    func enableCodingContext(){guard let host,!active,!host.busy,!host.loading else{return};var value=host.settings;value.context=8192;host.updateSettings(value);error=nil}
+    func enableCodingContext(){guard let host,!active,!host.busy,!host.loading else{return};var value=host.settings;value.context=max(8192,ParticleContextPolicy.recommended());host.updateSettings(value);error=nil}
     private var runAfterLoad:UUID?
     func loadAndRun(){guard let host,!host.loading else{return};runAfterLoad = draft.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty ? nil : session?.id;host.loadModel()}
     func modelReady(){guard let expected=runAfterLoad else{return};runAfterLoad=nil;guard expected==session?.id else{return};Task{await Task.yield();start()}}
     func start(){
         guard canLeaveEditor(),let host,host.connected,!host.busy,!host.loading,!active,let project else{return}
-        guard host.settings.context>=4096 else{error="Coding tools need a larger context. Enable coding context below, or choose 4096–8192 tokens in Settings.";return}
-        let text=draft.trimmingCharacters(in:.whitespacesAndNewlines);guard !text.isEmpty,text.utf8.count<=32_768 else{return}
+        guard host.settings.context>=4096 else{error="Coding tools need a larger context. Enable coding context below, or choose 4096 or more tokens in Settings.";return}
+        let text=draft.trimmingCharacters(in:.whitespacesAndNewlines);guard !text.isEmpty else{return}
+        guard text.utf8.count<=800_000 else{error="This task is too large. Try a smaller excerpt.";return}
         if session==nil{newSession()}
         draft="";active=true;host.busy=true;stopping=false;error=nil;rounds=0;repairs=0;verificationRepairs=0;runStartedEventCount=session?.events.count ?? 0;repeats=[:];cancellation=AgentCancellation();startedAt=Date();phase="Preparing project";status="Preparing \(project.root.lastPathComponent)…"
         task=Task{[weak self] in
@@ -107,7 +108,7 @@ import ParticleDesktopProtocol
         guard rounds<maximumSteps else{finish("Reached this run’s \(maximumSteps)-step limit. Review the activity, then send another instruction to continue.");return}
         rounds+=1;waitingForModel=true;stream="";phase="Preparing context";status="Preparing Churo Code…";host.busy=true
         let tools=planOnly ? AgentTools.catalog.filter{!["write_file","edit_file","run_command"].contains($0.name)} : AgentTools.catalog
-        host.sendCommand(DesktopCommand("agent",messages:session.history,system:AgentTools.prompt(project:project.root.path,planOnly:planOnly)+"\nUser preferences: "+host.settings.system,tools:tools))
+        host.sendCommand(DesktopCommand("agent",messages:session.history,system:AgentTools.prompt(project:project.root.path,planOnly:planOnly,style:host.settings.codeResponseStyle)+"\nUser preferences: "+host.settings.system,reasoningBudget:host.settings.codeResponseStyle.budget,tools:tools))
     }
     func handle(_ event:[String:Any])->Bool{
         guard active,let type=event["event"] as? String else{return false}
