@@ -90,4 +90,4 @@ The inherited `TurboFieldfare*` app, server, CLI, and repacker remain Gemma-spec
 
 See [workspace setup](docs/WORKSPACE_SETUP.md), [codebase analysis](docs/CODEBASE_ANALYSIS.md), and [upstream documentation](UPSTREAM_README.md). Consult `AGENTS.md` before model-using tests or inference.
 
-Context capacity, 16K output allowances, and independent Instant/Thinking modes are documented in [Context and response modes](docs/particleone/CONTEXT_AND_MODES.md).
+Context capacity, 16K output allowances, and independent Instant/Thinking modes are documented in [Context and response modes](docs/particleone/CONTEXT_AND_MODES.md). File-path handling, approvals and failed-write recovery are covered in [File-tool reliability](docs/particleone/TOOL_RELIABILITY.md).

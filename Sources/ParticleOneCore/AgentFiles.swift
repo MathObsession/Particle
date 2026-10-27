@@ -8,22 +8,45 @@ public enum AgentFailure:Error,LocalizedError {
 }
 public final class AgentProject:@unchecked Sendable {
     public let root:URL
+    private let rootAliases:[String]
     private let lock=NSLock()
     private var readHashes=[String:String]()
     public init(root:URL)throws{
         self.root=root.standardizedFileURL.resolvingSymlinksInPath()
         var directory:ObjCBool=false
         guard FileManager.default.fileExists(atPath:self.root.path,isDirectory:&directory),directory.boolValue,self.root.path != "/",self.root.path != FileManager.default.homeDirectoryForCurrentUser.path else{throw AgentFailure.message("Choose a specific project folder, rather than your whole Mac or home folder.")}
+        // Foundation may render /private/tmp as /tmp. Resolve the selected
+        // root only, never a supplied child path; children still use O_NOFOLLOW.
+        var aliases=[self.root.path,root.standardizedFileURL.path]
+        if let resolved=realpath(self.root.path,nil){aliases.append(String(cString:resolved));free(resolved)}
+        rootAliases=Array(Set(aliases)).sorted{$0.count>$1.count}
     }
     public static func hash(_ data:Data)->String{SHA256.hash(data:data).map{String(format:"%02x",$0)}.joined()}
     public static func privatePath(_ path:String)->Bool{
         path.split(separator:"/").contains{piece in let s=piece.lowercased();return s==".git" || s==".ssh" || s==".aws" || s==".codex" || s==".agents" || s==".npmrc" || s==".netrc" || s.hasPrefix(".env") || s.hasSuffix(".pem") || s.hasSuffix(".key") || s=="credentials" || s.hasPrefix("id_rsa") || s.hasPrefix("id_ed25519")}
     }
+    /// Accept the model's absolute project paths without widening access.
+    /// Validate raw components before normalization, then continue using the
+    /// existing descriptor-relative, O_NOFOLLOW filesystem operations.
+    public func relativePath(_ path:String)throws->String {
+        guard !path.contains("\0"),!path.contains("\\"),path.utf8.count<=4096,
+              !path.split(separator:"/").contains("..") else{
+            throw AgentFailure.message("Use a path inside the selected project, without parent traversal or backslashes.")
+        }
+        let relative:String
+        if path.hasPrefix("/") {
+            guard let prefix=rootAliases.first(where:{path==$0 || path.hasPrefix($0+"/")}) else{
+                throw AgentFailure.message("That absolute path is outside the selected project. Use a project-relative path, such as showcase.html.")
+            }
+            relative=path==prefix ? "." : String(path.dropFirst(prefix.count+1))
+        }else{relative=path}
+        let components=relative.split(separator:"/").filter{$0 != "."}
+        let normalized=components.joined(separator:"/")
+        guard !Self.privatePath(normalized) else{throw AgentFailure.message("That path contains private credentials or protected project data.")}
+        return normalized.isEmpty ? "." : normalized
+    }
     private func parts(_ path:String)throws->[String]{
-        guard !path.hasPrefix("/"),!path.contains("\0"),!path.contains("\\"),path.utf8.count<=4096 else{throw AgentFailure.message("Use a relative project path.")}
-        let result=path.split(separator:"/").map(String.init)
-        guard !result.contains(".."),!Self.privatePath(path) else{throw AgentFailure.message("That path is outside the allowed project files or contains private credentials.")}
-        return result.filter{$0 != "."}
+        try relativePath(path).split(separator:"/").filter{$0 != "."}.map(String.init)
     }
     private func parent<T>(_ path:String,create:Bool=false,_ action:(Int32,String)throws->T)throws->T{
         let components=try parts(path);guard let leaf=components.last else{throw AgentFailure.message("A file path is required.")}
@@ -49,7 +72,8 @@ public final class AgentProject:@unchecked Sendable {
         return bytes
     }
     public func readText(_ path:String,remember:Bool=true)throws->String{
-        try parent(path){fd,leaf in
+        let path=try relativePath(path)
+        return try parent(path){fd,leaf in
             guard let bytes=try data(parent:fd,leaf:leaf),let text=String(data:bytes,encoding:.utf8),!text.contains("\0") else{throw AgentFailure.message("File is missing or is not UTF-8 text.")}
             if remember{lock.lock();readHashes[path]=Self.hash(bytes);lock.unlock()};return text
         }
@@ -111,7 +135,9 @@ public final class AgentProject:@unchecked Sendable {
         return results.isEmpty ? "No matches in the scanned source files." : results.joined(separator:"\n")
     }
     public func propose(_ call:AgentCall)throws->AgentChange{
-        guard let path=call.arguments["path"] else{throw AgentFailure.message("Missing file path.")}
+        guard let suppliedPath=call.arguments["path"] else{throw AgentFailure.message("Missing file path; no file was changed.")}
+        let path=try relativePath(suppliedPath)
+        if call.name=="write_file",call.arguments["content"]==nil{throw AgentFailure.message("write_file requires content; no file was changed.")}
         return try parentForProposal(path){before in
             if let before {
                 lock.lock();let known=readHashes[path];lock.unlock()
@@ -135,6 +161,7 @@ public final class AgentProject:@unchecked Sendable {
         }
     }
     public func apply(_ change:AgentChange,undo:Bool=false)throws{
+        let canonicalPath=try relativePath(change.path)
         try parent(change.path,create:!undo){fd,leaf in
             let existing=try data(parent:fd,leaf:leaf),expected=undo ? change.afterHash : change.beforeHash
             guard existing.map(Self.hash)==expected else{throw AgentFailure.message("File changed after review. Nothing was overwritten; read and review it again.")}
@@ -147,7 +174,7 @@ public final class AgentProject:@unchecked Sendable {
             let bytes=Data(text!.utf8)
             try bytes.withUnsafeBytes { buffer in var offset=0;while offset<bytes.count{let n=Darwin.write(output,buffer.baseAddress!.advanced(by:offset),bytes.count-offset);if n<0 && errno==EINTR{continue};guard n>0 else{throw AgentFailure.message("Write failed.")};offset+=n}}
             guard fchmod(output,mode)==0,fsync(output)==0,try data(parent:fd,leaf:leaf).map(Self.hash)==expected,renameat(fd,name,fd,leaf)==0 else{throw AgentFailure.message("Could not commit change, or file changed during write.")}
-            lock.lock();readHashes[change.path]=Self.hash(bytes);lock.unlock()
+            lock.lock();readHashes[canonicalPath]=Self.hash(bytes);lock.unlock()
         }
     }
 }

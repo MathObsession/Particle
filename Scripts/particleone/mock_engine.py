@@ -31,6 +31,18 @@ for line in sys.stdin:
     elif len(observations)==1:text='Saved the file.```python\nprint(42)\n```'
     elif len(observations)==2:text='<tool_call>run_command<arg_key>command</arg_key><arg_value>cat verify.txt</arg_value></tool_call>'
     else:text='Created verify.txt and verified its actual contents.'
+   elif user=='agent-absolute-write':
+    target=root/'agent-project'/'showcase.html'
+    if not observations:text='<tool_call>write_file<arg_key>path</arg_key><arg_value>'+str(target)+'</arg_value><arg_key>content</arg_key><arg_value><!DOCTYPE html>\n<html><body>Particle showcase</body></html>\n</arg_value></tool_call>'
+    elif len(observations)==1:text='<tool_call>run_command<arg_key>command</arg_key><arg_value>test -f showcase.html && cat showcase.html</arg_value></tool_call>'
+    else:text='Created showcase.html and checked its actual contents.'
+   elif user in ['agent-failed-write','agent-failed-write-recover']:
+    if not observations:text='<tool_call>write_file<arg_key>path</arg_key><arg_value>main.txt</arg_value><arg_key>content</arg_key><arg_value>unread replacement</arg_value></tool_call>'
+    elif user=='agent-failed-write' or len(observations)==1:text='Successfully created the file even though the tool reported failure.'
+    elif len(observations)==2:text='<tool_call>read_file<arg_key>path</arg_key><arg_value>main.txt</arg_value></tool_call>'
+    elif len(observations)==3:text='<tool_call>write_file<arg_key>path</arg_key><arg_value>main.txt</arg_value><arg_key>content</arg_key><arg_value>recovered contents</arg_value></tool_call>'
+    elif len(observations)==4:text='<tool_call>run_command<arg_key>command</arg_key><arg_value>cat main.txt</arg_value></tool_call>'
+    else:text='Corrected the request, wrote main.txt and checked its actual contents.'
    elif not observations and user=='agent-cancel':text='<tool_call>run_command<arg_key>command</arg_key><arg_value>sleep 10</arg_value></tool_call>'
    elif not observations:text='<tool_call>write_file<arg_key>path</arg_key><arg_value>denied.txt</arg_value><arg_key>content</arg_key><arg_value>should not be written</arg_value></tool_call>'
    else:text='The requested operation was denied or blocked; no file was written.'

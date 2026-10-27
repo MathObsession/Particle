@@ -56,7 +56,7 @@ struct CodeWorkspaceView:View {
                 ForEach(code.session?.entries ?? []){entry in
                     if entry.role=="user"{Text(entry.text).font(Design.body(13)).textSelection(.enabled).padding(16).frame(maxWidth:.infinity,alignment:.leading).background{CodeMaterial(panel:true).clipShape(RoundedRectangle(cornerRadius:18))}.overlay(RoundedRectangle(cornerRadius:18).stroke(Design.line.opacity(0.6),lineWidth:1))}
                     else if entry.role=="assistant",entry.displayHidden != true,!entry.text.trimmingCharacters(in:.whitespacesAndNewlines).hasPrefix("<tool_call>"){
-                        CodeAssistantReply(entry:entry,collapseCode:code.session?.changes.isEmpty == false)
+                        CodeAssistantReply(entry:entry,collapseCode:code.session?.changes.isEmpty == false || !code.failedFileChanges.isEmpty)
                     }
                 }
                 if code.active && !code.waitingForModel && code.pending==nil{HStack(spacing:9){ProgressView().controlSize(.small);Text(code.status).font(Design.body(11)).foregroundStyle(Design.muted)}}
@@ -65,10 +65,13 @@ struct CodeWorkspaceView:View {
                         HStack(spacing:10){ProgressView().controlSize(.small);Text(code.status).font(Design.body(11)).foregroundStyle(Design.muted)}
                         if code.phase=="Reading context"{ProgressView(value:code.contextProgress).tint(Design.green).frame(maxWidth:300)}
                         if code.stream.contains("<tool_call>"){Label("Preparing a tool action",systemImage:"wrench.and.screwdriver").font(Design.body(11)).foregroundStyle(Design.muted)}
-                        else if !code.stream.isEmpty{CodeStreamPreview(text:code.stream)}
+                        else if !code.stream.isEmpty && !code.repairingFileFailure{CodeStreamPreview(text:code.stream)}
                     }.padding(.vertical,8)
                 }
                 if !(code.session?.events.isEmpty ?? true){activitySummary}
+                if !code.active,code.error==nil,let failure=code.failedFileChanges.first {
+                    HStack(alignment:.top,spacing:9){Image(systemName:"exclamationmark.circle").foregroundStyle(Design.green);VStack(alignment:.leading,spacing:4){Text("File change not applied").font(Design.medium(11));Text(failure.call.arguments["path"] ?? "Missing path").font(Design.mono(10));Text(failure.output).font(Design.body(10)).foregroundStyle(Design.muted)};Spacer()}.padding(14).background{CodeMaterial(panel:true).clipShape(RoundedRectangle(cornerRadius:14))}
+                }
                 if !code.active,code.verification != .none{verificationSummary}
                 Color.clear.frame(height:1).id("code-end")
             }.padding(.horizontal,30).padding(.vertical,24).frame(maxWidth:880).frame(maxWidth:.infinity)}

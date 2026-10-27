@@ -32,7 +32,10 @@ import ParticleDesktopProtocol
     @Published var contextProgress=0.0
     @Published var startedAt:Date?
     @Published var phase=""
-    private var verificationRepairs=0,runStartedEventCount=0
+    private var verificationRepairs=0,mutationRepairs=0,runStartedEventCount=0
+    var failedFileChanges:[AgentEvent]{guard let project else{return []};return AgentMutationRecovery.unresolved(session?.events ?? [],project:project)}
+    private var currentFileFailures:[AgentEvent]{guard let project else{return []};return AgentMutationRecovery.unresolved(Array((session?.events ?? []).dropFirst(runStartedEventCount)),project:project)}
+    var repairingFileFailure:Bool{active && !currentFileFailures.isEmpty}
     var verification:AgentVerification{AgentVerification.state(events:session?.events ?? [])}
     var recentProjects:[String]{Array(Set(sessions.map(\.project))).sorted()}
     func showPanel(_ name:String){panel=name;inspectorVisible=true}
@@ -92,7 +95,7 @@ import ParticleDesktopProtocol
         let text=draft.trimmingCharacters(in:.whitespacesAndNewlines);guard !text.isEmpty else{return}
         guard text.utf8.count<=800_000 else{error="This task is too large. Try a smaller excerpt.";return}
         if session==nil{newSession()}
-        draft="";active=true;host.busy=true;stopping=false;error=nil;rounds=0;repairs=0;verificationRepairs=0;runStartedEventCount=session?.events.count ?? 0;repeats=[:];cancellation=AgentCancellation();startedAt=Date();phase="Preparing project";status="Preparing \(project.root.lastPathComponent)…"
+        draft="";active=true;host.busy=true;stopping=false;error=nil;rounds=0;repairs=0;verificationRepairs=0;mutationRepairs=0;runStartedEventCount=session?.events.count ?? 0;repeats=[:];cancellation=AgentCancellation();startedAt=Date();phase="Preparing project";status="Preparing \(project.root.lastPathComponent)…"
         task=Task{[weak self] in
             let context=try? await Task.detached{try project.startupContext()}.value
             guard let self else{return}
@@ -127,6 +130,17 @@ import ParticleDesktopProtocol
             mutate{$0.entries.append(entry)};stream=""
             guard event["finish"] as? String=="stop" else{finish("The reply reached its output or reasoning limit. Incomplete tool calls were not executed. Send a narrower instruction to continue.");return true}
             do{queue=try AgentCalls.parse(text);if queue.isEmpty{
+                let failures=currentFileFailures
+                if !failures.isEmpty {
+                    mutate{if !$0.entries.isEmpty{$0.entries[$0.entries.count-1].displayHidden=true}}
+                    if !planOnly,failures.allSatisfy(AgentMutationRecovery.mayRetry),mutationRepairs<2 {
+                        mutationRepairs+=1;observation(AgentMutationRecovery.instruction(failures),success:false);nextModelTurn()
+                    }else{
+                        let failure=failures[0]
+                        finish("File change was not applied: \(failure.call.arguments["path"] ?? "missing path"). \(String(failure.output.prefix(600)))")
+                    }
+                    return true
+                }
                 if !planOnly,[AgentVerification.needed,.failed].contains(verification),verificationRepairs<2,(session?.events.dropFirst(runStartedEventCount).contains{["write_file","edit_file"].contains($0.call.name) && $0.status=="done"} ?? false) {
                     verificationRepairs+=1
                     mutate{if !$0.entries.isEmpty{$0.entries[$0.entries.count-1].displayHidden=true}}
@@ -148,7 +162,13 @@ import ParticleDesktopProtocol
         repeats[signature,default:0]+=1
         guard repeats[signature,default:0]<=2 else{finish("Stopped a repeated tool loop. Review the tool results and refine the request.");return}
         let event=AgentEvent(call);mutate{$0.events.append(event)};pending=event;proposal=nil
-        if planOnly && ["write_file","edit_file","run_command"].contains(call.name){completeTool("Plan mode blocks edits and terminal commands.",success:false);return}
+        if planOnly && ["write_file","edit_file","run_command"].contains(call.name){completeTool("Plan mode blocks edits and terminal commands.",success:false,retryAllowed:false);return}
+        if ["write_file","edit_file"].contains(call.name),let project {
+            let target=AgentMutationRecovery.target(call,project:project)
+            if currentFileFailures.contains(where:{!AgentMutationRecovery.mayRetry($0) && AgentMutationRecovery.target($0.call,project:project)==target}) {
+                completeTool("User denied this file operation in this run. A new user instruction is required.",success:false,retryAllowed:false);return
+            }
+        }
         if ["write_file","edit_file"].contains(call.name){
             do{guard let project else{throw AgentFailure.message("Project unavailable.")};let change=try project.propose(call)
                 guard (session?.changes.reduce(0,{$0+($1.before?.utf8.count ?? 0)+$1.after.utf8.count}) ?? 0)+change.after.utf8.count+(change.before?.utf8.count ?? 0)<=32*1024*1024 else{throw AgentFailure.message("Change history reached 32 MiB. Start a fresh coding session.")}
@@ -197,11 +217,15 @@ import ParticleDesktopProtocol
             }catch{toolRunning=false;if stopping{finish()}else{completeTool(error.localizedDescription,success:false)}}
         }
     }
-    func deny(_ expected:UUID?=nil){guard let pending,!toolRunning,expected==nil || expected==pending.id else{return};completeTool("User denied this operation. Do not retry it without a new instruction.",success:false)}
-    private func updateEvent(_ state:String,output:String="") {guard let id=pending?.id else{return};mutate{if let index=$0.events.firstIndex(where:{$0.id==id}){$0.events[index].status=state;if !output.isEmpty{$0.events[index].output=String(output.prefix(12_000))}}}}
-    private func completeTool(_ output:String,success:Bool){updateEvent(success ? "done" : "failed",output:output);observation(output,success:success);pending=nil;proposal=nil;if stopping{finish()}else{nextTool()}}
-    private func observation(_ output:String,success:Bool){
-        let object:[String:Any]=["success":success,"tool":pending?.call.name ?? "protocol","output":String(output.prefix(6000)),"truncated":output.count>6000]
+    func deny(_ expected:UUID?=nil){guard let pending,!toolRunning,expected==nil || expected==pending.id else{return};completeTool("User denied this operation. Do not retry it without a new instruction.",success:false,retryAllowed:false)}
+    private func updateEvent(_ state:String,output:String="",retryAllowed:Bool?=nil) {guard let id=pending?.id else{return};mutate{if let index=$0.events.firstIndex(where:{$0.id==id}){$0.events[index].status=state;if let retryAllowed{$0.events[index].retryAllowed=retryAllowed};if !output.isEmpty{$0.events[index].output=String(output.prefix(12_000))}}}}
+    private func completeTool(_ output:String,success:Bool,retryAllowed:Bool?=nil){updateEvent(success ? "done" : "failed",output:output,retryAllowed:retryAllowed);observation(output,success:success,retryAllowed:retryAllowed);pending=nil;proposal=nil;if stopping{finish()}else{nextTool()}}
+    private func observation(_ output:String,success:Bool,retryAllowed:Bool?=nil){
+        var object:[String:Any]=["success":success,"tool":pending?.call.name ?? "protocol","output":String(output.prefix(6000)),"truncated":output.count>6000]
+        if let call=pending?.call,["write_file","edit_file"].contains(call.name){
+            object["file_applied"]=success
+            if !success{object["host_instruction"]=retryAllowed==false ? "The file was not created or overwritten. This operation was denied or blocked by the host; do not retry without a new user instruction or claim success." : "The file was not created or overwritten by this failed operation. Correct the request or report the blocker; do not claim success."}
+        }
         let data=(try? JSONSerialization.data(withJSONObject:object,options:[.sortedKeys])) ?? Data()
         let text=String(decoding:data,as:UTF8.self).replacingOccurrences(of:"<",with:"\\u003c").replacingOccurrences(of:"[@BOS@]",with:"[BOS text]")
         mutate{$0.entries.append(AgentEntry("tool",text))}

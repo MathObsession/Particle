@@ -26,6 +26,6 @@ jobs:
           swift build -c release --product ParticleOne
           swift build -c release --product ParticleCLI
       - name: Run model-free focused tests
-        run: Scripts/test.sh -c release --filter 'ContextAndModeTests|AgentHarnessTests|AgentPromptRenderingTests|ParticleOneTests|MessageEditingTests|NoThinkingTests|ThinkingControlTests|WorkspacePolishTests'
+        run: Scripts/test.sh -c release --filter 'AgentRecoveryTests|ContextAndModeTests|AgentHarnessTests|AgentPromptRenderingTests|ParticleOneTests|MessageEditingTests|NoThinkingTests|ThinkingControlTests|WorkspacePolishTests'
       - name: Validate update publisher and host
         run: python3 Scripts/particleone/test_updates.py

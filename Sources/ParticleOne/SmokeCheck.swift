@@ -29,6 +29,10 @@ import ParticleDesktopProtocol
             let pid=model.modelProcessID
             model.setCodeMode(true);model.code.openProject(project)
             model.code.draft="Read main.txt. Use edit_file to replace mode=red with mode=green. Then use run_command with exactly this command: /usr/bin/grep -q 'mode=green' main.txt && /bin/echo verified\nThen finish with a short summary. Do not modify other files."
+            let absoluteFixture=ProcessInfo.processInfo.environment["PARTICLE_NATIVE_ABSOLUTE_PATHS"]=="1"
+            if absoluteFixture {
+                model.code.draft="Use read_file with the absolute path \(project.path)/main.txt. Then use write_file with that same absolute path and content exactly mode=green followed by a newline. Then use run_command with exactly this command: /usr/bin/grep -q 'mode=green' main.txt && /bin/echo verified. Finish with a short summary. Do not modify other files."
+            }
             model.code.start()
             let end=ProcessInfo.processInfo.systemUptime+420
             var approvedEdits=0,approvedCommands=0,handled=Set<UUID>()
@@ -46,8 +50,13 @@ import ParticleDesktopProtocol
             checks["real_command_approved"]=approvedCommands>0
             checks["file_changed_correctly"]=(try? String(contentsOf:project.appendingPathComponent("main.txt"),encoding:.utf8))=="mode=green\n"
             checks["native_read_tool"]=model.code.session?.events.contains{$0.call.name=="read_file" && $0.status=="done"}==true
-            checks["native_edit_tool"]=model.code.session?.events.contains{$0.call.name=="edit_file" && $0.status=="done"}==true
+            checks["native_mutation_tool"]=model.code.session?.events.contains{$0.call.name==(absoluteFixture ? "write_file" : "edit_file") && $0.status=="done"}==true
             checks["native_command_tool"]=model.code.session?.events.contains{$0.call.name=="run_command" && $0.status=="done" && ($0.output.contains("verified") || $0.output.contains("mode=green"))}==true
+            if absoluteFixture {
+                checks["absolute_read_completed"]=model.code.session?.events.contains{$0.call.name=="read_file" && $0.call.arguments["path"]==project.path+"/main.txt" && $0.status=="done"}==true
+                checks["absolute_write_completed"]=model.code.session?.events.contains{$0.call.name=="write_file" && $0.call.arguments["path"]==project.path+"/main.txt" && $0.status=="done"}==true
+                checks["file_failure_resolved"]=model.code.failedFileChanges.isEmpty
+            }
             checks["agent_finished"] = !model.code.active && model.code.error==nil
             if let change=model.code.session?.changes.last{model.code.undo(change);checks["native_undo"]=(try? String(contentsOf:project.appendingPathComponent("main.txt"),encoding:.utf8))=="mode=red\n"}
         }
@@ -249,6 +258,29 @@ import ParticleDesktopProtocol
         checks["editor_save_invalidates_old_check"]=model.code.verification == .needed
         if let change=model.code.session?.changes.last{model.code.undo(change)}
         model.code.switchProject(fixture.path)
+        model.code.newSession();model.code.draft="agent-absolute-write";model.code.start()
+        checks["absolute_write_approval"]=await wait{model.code.proposal?.path=="showcase.html"}
+        checks["absolute_write_not_applied_before_approval"] = !FileManager.default.fileExists(atPath:fixture.appendingPathComponent("showcase.html").path)
+        model.code.approve(model.code.pending?.id)
+        checks["absolute_write_check_approval"]=await wait{model.code.pending?.call.name=="run_command"}
+        model.code.approve(model.code.pending?.id)
+        checks["absolute_write_completed"]=await wait{!model.code.active && model.code.error==nil}
+        checks["absolute_write_real_file"]=(try? String(contentsOf:fixture.appendingPathComponent("showcase.html"),encoding:.utf8))?.contains("Particle showcase")==true
+        checks["absolute_write_verified"]=model.code.verification == .passed
+        model.code.newSession();model.code.draft="agent-failed-write";model.code.start()
+        checks["failed_write_blocks_false_success"]=await wait{!model.code.active && model.code.error?.contains("not applied")==true}
+        checks["failed_write_no_false_success_visible"]=model.code.session?.entries.filter{$0.role=="assistant" && $0.displayHidden != true}.isEmpty==true
+        checks["failed_write_did_not_replace_file"]=(try? String(contentsOf:fixture.appendingPathComponent("main.txt"),encoding:.utf8))=="color=red\n"
+        checks["failed_write_bounded_recovery"]=model.code.session?.entries.filter{$0.role=="assistant"}.count==4
+        model.code.newSession();model.code.draft="agent-failed-write-recover";model.code.start()
+        checks["failed_write_corrected_request_approval"]=await wait{model.code.proposal?.path=="main.txt"}
+        model.code.approve(model.code.pending?.id)
+        checks["failed_write_corrected_check_approval"]=await wait{model.code.pending?.call.name=="run_command"}
+        model.code.approve(model.code.pending?.id)
+        checks["failed_write_recovered"]=await wait{!model.code.active && model.code.error==nil}
+        checks["failed_write_recovery_actual_file"]=(try? String(contentsOf:fixture.appendingPathComponent("main.txt"),encoding:.utf8))=="recovered contents"
+        checks["failed_write_recovery_verified"]=model.code.verification == .passed && model.code.failedFileChanges.isEmpty
+        if let change=model.code.session?.changes.last{model.code.undo(change)}
         model.code.newSession();model.code.draft="agent-deny";model.code.start()
         checks["agent_new_file_approval"]=await wait{model.code.proposal != nil}
         model.code.deny(model.code.pending?.id);checks["agent_denied_completes"]=await wait{!model.code.active}
