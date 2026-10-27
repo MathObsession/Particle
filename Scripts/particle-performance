@@ -1,0 +1,105 @@
+#!/usr/bin/env python3
+"""Reproducible, serial Particle benchmarks. Never clears OS or model caches."""
+import argparse
+import datetime
+import hashlib
+import json
+import os
+from pathlib import Path
+import platform
+import re
+import statistics
+import subprocess
+import sys
+
+root = Path(__file__).resolve().parent.parent
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument('suite', choices=['attention', 'kernels', 'io', 'hybrid', 'smoke', 'session', 'full'])
+parser.add_argument('--attention', default='fast', choices=['fast', 'auto', 'reference', 'tiled', 'split', 'tensor'])
+parser.add_argument('--projection', default='auto', choices=['auto', 'reference', 'staged', 'vector'])
+parser.add_argument('--source-workers', type=int, choices=[1, 2, 4], default=4)
+parser.add_argument('--ssd-workers', type=int, choices=[1, 2, 4], default=2)
+parser.add_argument('--chunk', type=int, choices=[32, 64, 128, 256], default=128)
+parser.add_argument('--hybrid', action='store_true')
+parser.add_argument('--coalesce', action='store_true')
+parser.add_argument('--output', type=Path)
+args = parser.parse_args()
+stamp = datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%dT%H%M%SZ')
+output = args.output or root / 'docs/validation/particle-prefill-m2' / stamp
+output.mkdir(parents=True, exist_ok=True)
+wrapper = root / 'Scripts/particle'
+
+def capture(command):
+    return subprocess.run(command, cwd=root, capture_output=True, text=True).stdout.strip()
+
+# Check the environment through the project helper; it selects the SD toolchain.
+doctor = subprocess.run([str(wrapper), 'doctor'], cwd=root, capture_output=True, text=True)
+(output / 'doctor.log').write_text(doctor.stdout + doctor.stderr)
+if doctor.returncode:
+    sys.exit('Particle toolchain preflight failed; see doctor.log')
+processes = subprocess.run(['pgrep', '-fl', 'ParticleCLI|TurboFieldfareServer|TurboFieldfareMac|TurboFieldfareDecodeService|TurboFieldfareCLI|swiftpm-testing-helper|mlx_lm|mlx-lm'], capture_output=True, text=True)
+if processes.returncode == 0:
+    sys.exit('Another model or test process is running:\n' + processes.stdout)
+pressure = capture(['memory_pressure', '-Q'])
+if args.suite in ['smoke', 'session', 'full']:
+    free = re.search(r'free percentage:\s*(\d+)', pressure)
+    if not free or int(free[1]) < 25:
+        sys.exit('Memory pressure is too high or unavailable for a real-model test')
+command = [str(wrapper), 'run']
+if args.suite == 'attention':
+    command += ['--benchmark-attention']
+elif args.suite == 'hybrid':
+    command += ['--benchmark-hybrid']
+elif args.suite == 'io':
+    command += ['--benchmark-io']
+elif args.suite == 'kernels':
+    command += ['--benchmark-kernels', '--projection', args.projection]
+else:
+    configuration = {
+        'smoke': dict(histories=[32], suffixes=[4], rounds=1, decodeTokens=2),
+        'session': dict(histories=[512], suffixes=[16, 128], rounds=3, decodeTokens=64),
+        'full': dict(histories=[512, 2048, 4096, 8000], suffixes=[1, 16, 64, 128], rounds=3, decodeTokens=64),
+    }[args.suite]
+    config_path = output / 'configuration.json'
+    config_path.write_text(json.dumps(configuration, indent=2) + '\n')
+    context = max(64, ((max(configuration['histories']) + max(configuration['suffixes']) + configuration['decodeTokens'] + 63) // 64) * 64)
+    command += ['--raw', '--prompt', 'Explain how computers learn from examples. Give a detailed explanation with practical examples. ',
+                '--max-context', str(context), '--max-new', str(configuration['decodeTokens']),
+                '--benchmark-session', str(config_path), '--attention', args.attention, '--projection', args.projection,
+                '--source-read-workers', str(args.source_workers), '--ssd-read-workers', str(args.ssd_workers),
+                '--prefill-chunk', str(args.chunk)]
+    if args.hybrid:
+        command += ['--hybrid-prefill']
+    if args.coalesce:
+        command += ['--coalesce-reads']
+
+files = sorted(p for directory in ['Sources/ParticleCore', 'Sources/ParticleCLI', 'Tests/ParticleTests']
+               for p in (root / directory).rglob('*') if p.is_file())
+manifest = {
+    'command': command, 'platform': platform.platform(), 'cpu': capture(['sysctl', '-n', 'machdep.cpu.brand_string']),
+    'ram_bytes': capture(['sysctl', '-n', 'hw.memsize']), 'memory_pressure': pressure,
+    'source_sha256': {str(p.relative_to(root)): hashlib.sha256(p.read_bytes()).hexdigest() for p in files},
+    'protocol': 'One model process; existing SSD and OS caches retained. Prefix extension reported separately. No cold-cache claim. Session benchmark ignores stop IDs to measure fixed decode steps.',
+}
+(output / 'manifest.json').write_text(json.dumps(manifest, indent=2) + '\n')
+print('Writing results to', output, flush=True)
+with (output / 'results.json').open('w') as result, (output / 'progress.log').open('w') as progress:
+    run = subprocess.run(command, cwd=root, stdout=result, stderr=progress)
+manifest['exit_code'] = run.returncode
+(output / 'manifest.json').write_text(json.dumps(manifest, indent=2) + '\n')
+if run.returncode:
+    sys.exit('Benchmark failed; see progress.log and results.json')
+rows = json.loads((output / 'results.json').read_text())
+if args.suite not in ['attention', 'kernels', 'io', 'hybrid']:
+    summary = []
+    for history, suffix in sorted({(p['history'], p['suffix']) for p in rows}):
+        group = [p for p in rows if p['history'] == history and p['suffix'] == suffix]
+        control = [p for p in group if p['mode'] == 'reference']
+        candidate = [p for p in group if p['mode'] == 'candidate']
+        prefill_ratio = statistics.median(p['prefillSeconds'] for p in control) / statistics.median(p['prefillSeconds'] for p in candidate)
+        decode_ratio = statistics.median(p['decodeSeconds'] for p in control) / statistics.median(p['decodeSeconds'] for p in candidate)
+        summary.append(dict(history=history, suffix=suffix, prefill_speedup=prefill_ratio, decode_speedup=decode_ratio,
+                            parity_passed=all(p['parityPassed'] for p in group),
+                            promotion_gate=prefill_ratio >= 1.10 and decode_ratio >= 1 / 1.05))
+    (output / 'summary.json').write_text(json.dumps(summary, indent=2) + '\n')
+print('Completed:', output, flush=True)

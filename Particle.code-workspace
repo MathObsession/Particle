@@ -1,0 +1,53 @@
+{
+  "folders": [
+    {
+      "name": "Particle",
+      "path": "."
+    }
+  ],
+  "settings": {
+    "swift.path": "/Volumes/Particle/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin",
+    "terminal.integrated.env.osx": {
+      "DEVELOPER_DIR": "/Volumes/Particle/Xcode.app/Contents/Developer",
+      "PARTICLE_MODEL_PATH": "/Volumes/Particle/Models/sarvam-30b/sarvam-30b-q4_k_m.gguf",
+      "CLANG_MODULE_CACHE_PATH": "/Volumes/Particle/Caches/Particle/Clang",
+      "SWIFTPM_MODULECACHE_OVERRIDE": "/Volumes/Particle/Caches/Particle/SwiftModules",
+      "PARTICLE_TOOLCHAIN": "xcode"
+    },
+    "files.watcherExclude": {
+      "**/.build/**": true
+    },
+    "search.exclude": {
+      "**/.build": true
+    }
+  },
+  "tasks": {
+    "version": "2.0.0",
+    "tasks": [
+      {
+        "label": "Particle: Check workspace",
+        "type": "shell",
+        "command": "./Scripts/particle doctor",
+        "problemMatcher": []
+      },
+      {
+        "label": "Particle: Resolve dependencies",
+        "type": "shell",
+        "command": "./Scripts/particle resolve",
+        "problemMatcher": []
+      },
+      {
+        "label": "Particle: Build CLI",
+        "type": "shell",
+        "command": "./Scripts/particle build -c release --product ParticleCLI",
+        "group": {
+          "kind": "build",
+          "isDefault": true
+        },
+        "problemMatcher": [
+          "$gcc"
+        ]
+      }
+    ]
+  }
+}

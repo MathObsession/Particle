@@ -1,0 +1,157 @@
+{
+  "approximate": false,
+  "architecture": "sarvam_moe",
+  "files": [
+    {
+      "bytes": 603979776,
+      "path": "embeddings.bin",
+      "sha256": "18494eefc69d31fbbf08996abc23d4b51048250db250d5f4bf71b5bc3ded5d28"
+    },
+    {
+      "bytes": 4632,
+      "path": "manifest.json",
+      "sha256": "1aa97aae017f8ef868e0ba0d263a5e4f8a08b0fb8547f4741260315d5880f0e6"
+    },
+    {
+      "bytes": 1547288576,
+      "path": "model_weights.bin",
+      "sha256": "d2366b1f0870cb71f2b77cdbe7069d6ebe275785885ab580ee62e2a14ab193d4"
+    },
+    {
+      "bytes": 1044381696,
+      "path": "packed_experts/layer_01.bin",
+      "sha256": "70535d3ad4e4aa18dee43028c8692f035083fec0feae4131399d6c6e1058c3a5"
+    },
+    {
+      "bytes": 905969664,
+      "path": "packed_experts/layer_02.bin",
+      "sha256": "ab96413d461a794bd1d2cf07d4767c9fc15128ca56a62bb5cca20dfb3466b647"
+    },
+    {
+      "bytes": 905969664,
+      "path": "packed_experts/layer_03.bin",
+      "sha256": "a4e83f49954126d543b86b2244a042b62825ba648b125b4c433695d15cc73258"
+    },
+    {
+      "bytes": 1044381696,
+      "path": "packed_experts/layer_04.bin",
+      "sha256": "5e194aefea7529b67e3dffb2cbd4f4c1d4ab1d0700aeefaa8ba3bbdbd676b0c9"
+    },
+    {
+      "bytes": 905969664,
+      "path": "packed_experts/layer_05.bin",
+      "sha256": "9a9599751f613ede05de08e56a242914547909e3aa2eebdcc53aeb0844b301b8"
+    },
+    {
+      "bytes": 905969664,
+      "path": "packed_experts/layer_06.bin",
+      "sha256": "38911edbd4d68bdb91e95e72a42ae92ed69fa5915adc493bf5b8e19b0f048e66"
+    },
+    {
+      "bytes": 1044381696,
+      "path": "packed_experts/layer_07.bin",
+      "sha256": "f1a7b9cd72c3154b79e1a6783e0810d1687b7b3e0bb1023e6a49c6b7a680ed57"
+    },
+    {
+      "bytes": 905969664,
+      "path": "packed_experts/layer_08.bin",
+      "sha256": "9aafecd9aaf3ed5f2c5ba220537e5da379c1fdc8a441a0cb1e2c62e019f8c968"
+    },
+    {
+      "bytes": 905969664,
+      "path": "packed_experts/layer_09.bin",
+      "sha256": "956536d2d678934007ca91e384d87aee5145c53a9dd9e5d4a8c55a36c41d86b8"
+    },
+    {
+      "bytes": 1044381696,
+      "path": "packed_experts/layer_10.bin",
+      "sha256": "a125df69f8421c6d22592e9e67f2edde2a9494fb1e619dd6fef37ad41f0fc8bd"
+    },
+    {
+      "bytes": 905969664,
+      "path": "packed_experts/layer_11.bin",
+      "sha256": "f5520880d1f5bc8e42713a8d142684e281efcd89a482e1d01c3b5157f589a6fb"
+    },
+    {
+      "bytes": 905969664,
+      "path": "packed_experts/layer_12.bin",
+      "sha256": "4b32b5ef387fb7ffef9f49481c0fc260fc9dfb54806c2cd5f08d7ae47f27fa7e"
+    },
+    {
+      "bytes": 1044381696,
+      "path": "packed_experts/layer_13.bin",
+      "sha256": "779962444a660fdca02cad496e9128de506487a9a8fbe0d92726897e5aa9d420"
+    },
+    {
+      "bytes": 905969664,
+      "path": "packed_experts/layer_14.bin",
+      "sha256": "5b9974983e22ff02343549c3722821dba9adf6748b640d3303fa088d05527f36"
+    },
+    {
+      "bytes": 905969664,
+      "path": "packed_experts/layer_15.bin",
+      "sha256": "17d074515419de553498364da1fa6a3b7ec5d7b4df6ca820d71ff8633647c4e8"
+    },
+    {
+      "bytes": 1044381696,
+      "path": "packed_experts/layer_16.bin",
+      "sha256": "2bf87655e987c04ced4f21d636bd3957aad8bd48f6d2126827adfb1b14908a6a"
+    },
+    {
+      "bytes": 1044381696,
+      "path": "packed_experts/layer_17.bin",
+      "sha256": "a5c40838281bc2f08827b234911c7f95533994a553167b2998bd6e52c27c7da6"
+    },
+    {
+      "bytes": 1044381696,
+      "path": "packed_experts/layer_18.bin",
+      "sha256": "69fef0efec2fef457226fcd6ef9f2015a2adfddbc36d4af0d0a13ec2899aa5f5"
+    },
+    {
+      "bytes": 155797,
+      "path": "packed_experts/layout.json",
+      "sha256": "6ed68ffd42f09eaabc338cea56b4815fa996d88e90f745ff3f013b4eeea200f6"
+    },
+    {
+      "bytes": 3143,
+      "path": "tokenizer/chat_template.jinja",
+      "sha256": "07a8ca6f96384a6878c9aa6d4e0616ae57f5937fa8d0ff014855704fa26a0ef4"
+    },
+    {
+      "bytes": 1433,
+      "path": "tokenizer/config.json",
+      "sha256": "db5a70c723fc5bd1ca123ab94d1c0a99d914a20c25eefcf041d137906e2341e9"
+    },
+    {
+      "bytes": 112,
+      "path": "tokenizer/generation_config.json",
+      "sha256": "39add3da02bdcab42533aaeb36493e2041a5d18b5e3ada6baddc3daf8105e3cc"
+    },
+    {
+      "bytes": 33627251,
+      "path": "tokenizer/tokenizer.json",
+      "sha256": "a574ceaaff7c7a8f091179c53fd17ae33567089c099d4ff37d4cb3bc1a87e80e"
+    },
+    {
+      "bytes": 1155258,
+      "path": "tokenizer/tokenizer_config.json",
+      "sha256": "3cdb41a3bcbc8a7e14dbcf8987ccad0cbfe8f82091f2a2c82020f1d0e219cdd5"
+    },
+    {
+      "bytes": 4179950,
+      "path": "vocabulary.json",
+      "sha256": "39f98988e985b5ae272fc5a9b179c69605a5b3170589b719fdd84956b7e60d65"
+    },
+    {
+      "bytes": 35379,
+      "path": "weights.json",
+      "sha256": "b16207fe5f439bfe797dfd16698698a8ab5e6951f47ca7cf3cef88085b3fb82c"
+    }
+  ],
+  "folder": "sarvam-30b-q4_k_m.particle",
+  "format": "particle",
+  "manifestSHA256": "1aa97aae017f8ef868e0ba0d263a5e4f8a08b0fb8547f4741260315d5880f0e6",
+  "profile": "native",
+  "totalBytes": 19605181515,
+  "version": 1
+}

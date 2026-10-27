@@ -1,0 +1,22 @@
+[
+  {"id":"math-add","category":"arithmetic","prompt":"What is 17 + 26?","choices":["43","33","53","42"],"correctIndex":0},
+  {"id":"math-subtract","category":"arithmetic","prompt":"What is 52 - 19?","choices":["31","33","37","71"],"correctIndex":1},
+  {"id":"math-multiply","category":"arithmetic","prompt":"What is 7 times 8?","choices":["15","48","56","64"],"correctIndex":2},
+  {"id":"math-fraction","category":"arithmetic","prompt":"What is one quarter of 36?","choices":["4","6","12","9"],"correctIndex":3},
+  {"id":"math-percent","category":"arithmetic","prompt":"What is 20 percent of 150?","choices":["30","20","15","75"],"correctIndex":0},
+  {"id":"code-length","category":"code","prompt":"In Python, what does len([10, 20, 30]) return?","choices":["2","3","30","60"],"correctIndex":1},
+  {"id":"code-json","category":"code","prompt":"Which string is valid JSON?","choices":["{name: 'Ada'}","{'name': 'Ada'}","{\"name\": \"Ada\"}","{\"name\": \"Ada\",}"],"correctIndex":2},
+  {"id":"code-search","category":"code","prompt":"What is the usual worst-case time complexity of binary search on a sorted array?","choices":["O(n squared)","O(n)","O(1)","O(log n)"],"correctIndex":3},
+  {"id":"code-append","category":"code","prompt":"In Python, what does list.append(value) return?","choices":["None","The new list","The added value","The list length"],"correctIndex":0},
+  {"id":"code-boolean","category":"code","prompt":"In Python, what is the value of (3 < 5) and (8 == 8)?","choices":["False","True","None","8"],"correctIndex":1},
+  {"id":"science-water","category":"science","prompt":"What is the chemical formula for water?","choices":["CO2","O2","H2O","NaCl"],"correctIndex":2},
+  {"id":"science-planet","category":"science","prompt":"Which planet is third from the Sun?","choices":["Mars","Venus","Jupiter","Earth"],"correctIndex":3},
+  {"id":"science-freeze","category":"science","prompt":"At normal atmospheric pressure, at approximately what Celsius temperature does pure water freeze?","choices":["0","100","32","-100"],"correctIndex":0},
+  {"id":"science-photosynthesis","category":"science","prompt":"What is the process by which green plants use sunlight to make sugars?","choices":["Digestion","Photosynthesis","Evaporation","Combustion"],"correctIndex":1},
+  {"id":"science-genetics","category":"science","prompt":"Which molecule carries most hereditary information in human cells?","choices":["Glucose","Water","DNA","Salt"],"correctIndex":2},
+  {"id":"hindi-water","category":"multilingual","prompt":"हिंदी में अंग्रेज़ी शब्द water का अर्थ क्या है?","choices":["आग","हवा","मिट्टी","पानी"],"correctIndex":3},
+  {"id":"hindi-opposite","category":"multilingual","prompt":"दिन का विलोम शब्द क्या है?","choices":["रात","सुबह","दोपहर","आज"],"correctIndex":0},
+  {"id":"tamil-water","category":"multilingual","prompt":"What does the Tamil word நீர் mean in English?","choices":["Fire","Water","Book","Tree"],"correctIndex":1},
+  {"id":"telugu-book","category":"multilingual","prompt":"What does the Telugu word పుస్తకం mean in English?","choices":["River","House","Book","Cloud"],"correctIndex":2},
+  {"id":"bengali-thanks","category":"multilingual","prompt":"What does the Bengali word ধন্যবাদ mean in English?","choices":["Good night","Water","School","Thank you"],"correctIndex":3}
+]

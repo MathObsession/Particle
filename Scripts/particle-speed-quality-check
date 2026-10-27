@@ -1,0 +1,91 @@
+#!/usr/bin/env python3
+"""Screen approximate expert budgets on one model process at a time; never claim full qualification."""
+import argparse
+import datetime
+import hashlib
+import json
+from pathlib import Path
+import re
+import statistics
+import subprocess
+import sys
+
+ROOT=Path(__file__).resolve().parent.parent
+p=argparse.ArgumentParser(description=__doc__)
+p.add_argument('--model',type=Path,default=Path('/Volumes/Particle/Models/sarvam-30b/sarvam-30b-q4_k_m.particle'))
+p.add_argument('--ssd-cache',type=Path,default=Path.home()/'Library/Caches/Particle/Experts')
+p.add_argument('--output',type=Path)
+p.add_argument('--questions',type=Path,default=ROOT/'docs/fixtures/particle-quality-screen-v1.json')
+p.add_argument('--profiles',default='6,4,3,2')
+p.add_argument('--parity-profiles',default='6,4,3,2')
+p.add_argument('--rounds',type=int,choices=[1,2,3],default=2)
+p.add_argument('--decode-tokens',type=int,choices=range(16,257),metavar='16...256',default=64)
+p.add_argument('--context',type=int,default=512)
+p.add_argument('--mirror-read-hint',choices=['default','nocache'],default='default')
+p.add_argument('--pipelined-verification',action='store_true')
+p.add_argument('--cooperative-quant',action='store_true')
+p.add_argument('--slots',type=int,choices=range(6,17),default=12)
+p.add_argument('--ssd-workers',type=int,choices=[1,2,4],default=2)
+a=p.parse_args()
+def numbers(value):
+    try: values=[int(v) for v in value.split(',')]
+    except ValueError: p.error('Expert profiles must be comma-separated integers.')
+    if not values or len(set(values))!=len(values) or any(v<2 or v>6 for v in values):p.error('Expert profiles must be unique numbers in 2...6.')
+    return values
+profiles=numbers(a.profiles); parity_profiles=numbers(a.parity_profiles)
+if 6 not in profiles:p.error('Include the six-expert quality baseline.')
+if not 256<=a.context<=8192:p.error('Screening context must be 256...8192.')
+def capture(command):
+    r=subprocess.run(command,text=True,capture_output=True)
+    return dict(command=command,exit_code=r.returncode,stdout=r.stdout,stderr=r.stderr)
+probe=capture(['pgrep','-fl','ParticleCLI|ParticlePack|TurboFieldfareServer|TurboFieldfareMac|TurboFieldfareDecodeService|swiftpm-testing-helper|mlx_lm|mlx-lm'])
+if probe['exit_code']!=1:sys.exit('Another model/test is active or process inspection failed. Close your chat with /quit.\n'+probe['stdout']+probe['stderr'])
+pressure=capture(['memory_pressure','-Q']);free=re.search(r'free percentage:\s*(\d+)',pressure['stdout'])
+if pressure['exit_code'] or not free or int(free[1])<25:sys.exit('Insufficient or unavailable memory headroom for screening.')
+if not (a.model/'verified-install.json').is_file() or not (a.ssd_cache/'mirror-v1/mirror-receipt.json').is_file():sys.exit('A verified .particle pack and completed SSD mirror are required.')
+questions=json.loads(a.questions.read_text())
+if len(questions)<4 or len(questions)>256:sys.exit('Expected 4...256 four-choice questions.')
+stamp=datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%dT%H%M%SZ')
+output=(a.output or ROOT/'docs/validation/particle-speed-quality'/stamp).resolve();output.mkdir(parents=True,exist_ok=False)
+config=dict(profiles=profiles,decodeTokens=a.decode_tokens,rounds=a.rounds,qualityQuestions=questions)
+config_path=output/'configuration.json';config_path.write_text(json.dumps(config,ensure_ascii=False,indent=2)+'\n')
+wrapper=ROOT/'Scripts/particle'
+doctor=capture([str(wrapper),'doctor'])
+(output/'doctor.log').write_text(doctor['stdout']+doctor['stderr'])
+if doctor['exit_code']:sys.exit('Toolchain/model preflight failed; see '+str(output/'doctor.log'))
+base=[str(wrapper),'run','--model',str(a.model),'--storage-profile','sd-hybrid','--ssd-cache-policy','mirror','--ssd-cache-mib','18432','--ssd-cache',str(a.ssd_cache),'--expert-cache-slots',str(a.slots),'--ssd-read-workers',str(a.ssd_workers),'--max-context',str(a.context),'--raw','--attention','reference','--projection','vector','--deferred-decode','--grouped-experts','--ffn-vector']
+base += ['--mirror-read-hint',a.mirror_read_hint]
+if a.pipelined_verification:base += ['--pipelined-verification']
+if a.cooperative_quant:base += ['--cooperative-quant']
+seed='Explain how a computer learns from examples. Include a practical example and a short Python sketch. '
+commands=[(f'parity-{k}',base+['--prompt','The answer is','--active-experts',str(k),'--compare-prefill','--prefill-chunk','4','--max-new','1']) for k in parity_profiles]
+commands.append(('screening',base+['--prompt',seed,'--max-new',str(a.decode_tokens),'--benchmark-speed-quality',str(config_path)]))
+def sha(path):return hashlib.sha256(path.read_bytes()).hexdigest()
+fingerprints={str(path.relative_to(ROOT)):sha(path) for path in sorted((ROOT/'Sources/ParticleCore').rglob('*')) if path.is_file()}
+for path in [ROOT/'Sources/ParticleCLI/main.swift',ROOT/'Scripts/particle-speed-quality-check',a.questions]:fingerprints[str(path)]=sha(path)
+manifest=dict(started_at=stamp,commands=commands,source_sha256=fingerprints,model_manifest_sha256=sha(a.model/'manifest.json'),configuration=config,environment=dict(doctor=doctor,macOS=capture(['sw_vers']),pressure_before=pressure,power_before=capture(['pmset','-g','batt']),thermal_before=capture(['pmset','-g','therm']),swap_before=capture(['sysctl','vm.swapusage']),vm_before=capture(['vm_stat']),hardware=capture(['sysctl','-n','machdep.cpu.brand_string','hw.memsize'])),qualified=False,notes='Experimental static expert-count approximation. Native weights and six-expert default preserved. Raw forced-decode speed and small four-choice quality screening do not certify 4 natural tokens/s or a 25% global quality-loss ceiling. OS/RAM caches retained; only one runner at a time.')
+manifest_path=output/'manifest.json';manifest_path.write_text(json.dumps(manifest,indent=2)+'\n')
+print('Results:',output,flush=True)
+for name,command in commands:
+    print('Running',name,'(one model process).',flush=True)
+    with (output/(name+'.json')).open('w') as out,(output/(name+'.log')).open('w') as log:
+        run=subprocess.run(command,cwd=ROOT,stdout=out,stderr=log)
+    manifest[name+'_exit_code']=run.returncode;manifest_path.write_text(json.dumps(manifest,indent=2)+'\n')
+    if run.returncode:sys.exit(name+' failed; see '+str(output/(name+'.log')))
+    if name.startswith('parity-'):
+        report=json.loads((output/(name+'.json')).read_text())
+        if any(row['bitwiseLogitMismatches'] or row['maxContinuationDifference']!=0 for row in report['passes']):sys.exit('Profile-specific scalar/batched bitwise parity failed; do not adopt.')
+report=json.loads((output/'screening.json').read_text())
+summary=dict(qualified=False,profiles=report['profiles'],native_default_unchanged=True,quality_metric=report['qualityMetric'],notes=report['notes'])
+for profile in summary['profiles']:
+    rows=[r for r in report['passes'] if r['activeExperts']==profile['activeExperts']]
+    profile['tokensPerSecondByPass']=[r['tokensPerSecond'] for r in rows]
+    profile['sourceBytes']=sum(r['sourceBytes'] for r in rows)
+    profile['requestedSSDBytes']=sum(r['ssdReadBytes'] for r in rows)
+    count=len(profile['questions']);correct=sum(q['predictedIndex']==q['correctIndex'] for q in profile['questions']);z=1.96
+    center=(correct/count+z*z/(2*count))/(1+z*z/count)
+    half=z*((correct/count*(1-correct/count)+z*z/(4*count))/count)**0.5/(1+z*z/count)
+    profile['accuracyWilson95']=[max(0,center-half),min(1,center+half)]
+manifest['environment']['power_after']=capture(['pmset','-g','batt']);manifest['environment']['swap_after']=capture(['sysctl','vm.swapusage']);manifest['environment']['vm_after']=capture(['vm_stat']);manifest['environment']['pressure_after']=capture(['memory_pressure','-Q'])
+manifest_path.write_text(json.dumps(manifest,indent=2)+'\n');(output/'summary.json').write_text(json.dumps(summary,indent=2)+'\n')
+print(json.dumps(summary,indent=2),flush=True)

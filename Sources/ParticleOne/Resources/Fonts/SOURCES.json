@@ -1,0 +1,47 @@
+[
+  {
+    "file": "Poppins-Regular.ttf",
+    "source": "https://raw.githubusercontent.com/google/fonts/main/ofl/poppins/Poppins-Regular.ttf",
+    "sha256": "7e65201e9b79159e2300267cc885e16c8dcef2424cdfa09a29bfb0980a94a7ba"
+  },
+  {
+    "file": "Poppins-Medium.ttf",
+    "source": "https://raw.githubusercontent.com/google/fonts/main/ofl/poppins/Poppins-Medium.ttf",
+    "sha256": "90373e7d838d32468438fc3e152dca0bdb12edcab99ea639f158790b1ba1fd05"
+  },
+  {
+    "file": "Poppins-SemiBold.ttf",
+    "source": "https://raw.githubusercontent.com/google/fonts/main/ofl/poppins/Poppins-SemiBold.ttf",
+    "sha256": "d3bf1bdaf0550e83da9ac0b1d1d9fe6db086835a83aa28578e609a394b9a0286"
+  },
+  {
+    "file": "poppins-OFL.txt",
+    "source": "https://raw.githubusercontent.com/google/fonts/main/ofl/poppins/OFL.txt",
+    "sha256": "6be04893d770899a015649c7aa3b582f871b272f8747a92b78b17c3e5c8b2573"
+  },
+  {
+    "file": "PT_Serif-Web-Regular.ttf",
+    "source": "https://raw.githubusercontent.com/google/fonts/main/ofl/ptserif/PT_Serif-Web-Regular.ttf",
+    "sha256": "a4951fade06ff8f09b7673aa81ffb65a8cd409e24d3289a6dc670bc4dda2557a"
+  },
+  {
+    "file": "PT_Serif-Web-Italic.ttf",
+    "source": "https://raw.githubusercontent.com/google/fonts/main/ofl/ptserif/PT_Serif-Web-Italic.ttf",
+    "sha256": "f57e95ff9dc85691a3b2e193f2028db36f6663939a46c0fc4f286d618b80b7ce"
+  },
+  {
+    "file": "ptserif-OFL.txt",
+    "source": "https://raw.githubusercontent.com/google/fonts/main/ofl/ptserif/OFL.txt",
+    "sha256": "ddf311c28ddf5a5ad9747649837346b67bed9d356789c3072bb27dbce49e514d"
+  },
+  {
+    "file": "SpaceMono-Regular.ttf",
+    "source": "https://raw.githubusercontent.com/google/fonts/main/ofl/spacemono/SpaceMono-Regular.ttf",
+    "sha256": "95837e182baeeada83368f7748db28357f0a1b75c6b84ff7065b5edf933c8e18"
+  },
+  {
+    "file": "spacemono-OFL.txt",
+    "source": "https://raw.githubusercontent.com/google/fonts/main/ofl/spacemono/OFL.txt",
+    "sha256": "8e4ee42b2553e1e01504e61cb0d46d148cd8c9e5eacaa3622a7df2d4f2955b9f"
+  }
+]

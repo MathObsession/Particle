@@ -1,0 +1,31 @@
+name: Particle source checks
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: particle-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  desktop:
+    runs-on: macos-26
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - name: Report toolchain
+        run: swift --version
+      - name: Check SwiftUI compatibility
+        run: |
+          ruby Scripts/check_swiftui_macros.rb --self-test
+          ruby Scripts/tests/swift_macro_probe_test.rb
+      - name: Build desktop and inference worker
+        run: |
+          swift build -c release --product ParticleOne
+          swift build -c release --product ParticleCLI
+      - name: Run model-free focused tests
+        run: Scripts/test.sh -c release --filter 'AgentHarnessTests|AgentPromptRenderingTests|ParticleOneTests|MessageEditingTests|NoThinkingTests|ThinkingControlTests|WorkspacePolishTests'
+      - name: Validate update publisher and host
+        run: python3 Scripts/particleone/test_updates.py

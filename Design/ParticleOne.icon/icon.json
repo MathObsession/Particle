@@ -1,0 +1,38 @@
+{
+  "fill": {
+    "solid": "srgb:0.69020,0.83529,0.56078,1.00000"
+  },
+  "groups": [
+    {
+      "name": "ParticleDesign artwork",
+      "layers": [
+        {
+          "name": "Full canvas artwork",
+          "image-name": "Artwork.png",
+          "glass": false,
+          "position": {
+            "scale": 1,
+            "translation-in-points": [
+              0,
+              0
+            ]
+          }
+        }
+      ],
+      "shadow": {
+        "kind": "none",
+        "opacity": 0
+      },
+      "specular": false,
+      "translucency": {
+        "enabled": false,
+        "value": 0
+      }
+    }
+  ],
+  "supported-platforms": {
+    "squares": [
+      "macOS"
+    ]
+  }
+}

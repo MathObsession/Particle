@@ -1,0 +1,7 @@
+Particle and the Churo assistant experience were created by Lakshya Prajapati.
+
+Churo Chat and Churo Code are assistant identities and runtime configurations. Their base model is Sarvam 30B, developed by Sarvam AI and distributed under Apache License 2.0. The source Q4_K_M quantization is by mtrajan. The .particle pack is a lossless runtime layout, not newly trained model weights. Original public release: https://huggingface.co/MathObsession/sarvam-30b-particle . The original model notices and license are preserved with the distribution.
+
+The application builds on TurboFieldfare, Swift Transformers, SwiftMath, Sparkle and other open-source dependencies under their respective licenses. Sparkle's license is bundled as Sparkle-LICENSE. PT Serif, Poppins and Space Mono are bundled under the SIL Open Font License; their notices are in Resources/Fonts.
+
+Public web tools use Exa's hosted MCP service and Jina Reader as a public-page fallback. Queries and URLs leave the Mac only after approval; inference and saved chats remain local. External service availability and limits are controlled by its provider.

@@ -1,0 +1,135 @@
+#!/usr/bin/env python3
+"""Compare reference and experimental native decode paths on a prepared SSD mirror."""
+import argparse
+import datetime
+import hashlib
+import json
+import platform
+from pathlib import Path
+import re
+import statistics
+import subprocess
+import sys
+
+ROOT = Path(__file__).resolve().parent.parent
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument('--model', type=Path, default=Path('/Volumes/Particle/Models/sarvam-30b/sarvam-30b-q4_k_m.particle'))
+parser.add_argument('--ssd-cache', type=Path, default=Path.home() / 'Library/Caches/Particle/Experts')
+parser.add_argument('--output', type=Path)
+parser.add_argument('--slots', type=int, choices=range(6,17), default=12)
+parser.add_argument('--ssd-workers', type=int, choices=[1,2,4], default=2)
+parser.add_argument('--history', type=int, default=64)
+parser.add_argument('--suffix', type=int, choices=[1,16,64,128], default=16)
+parser.add_argument('--rounds', type=int, choices=range(1,10), default=3)
+parser.add_argument('--ffn-vector', action='store_true')
+parser.add_argument('--decode-tokens', type=int, choices=range(1,257), metavar='1...256', default=64)
+args = parser.parse_args()
+if args.history < 1 or args.history+args.suffix+args.decode_tokens > 8192:
+    parser.error('History, suffix and decode allowance must fit the 8192-token context limit.')
+context = max(256, ((args.history+args.suffix+args.decode_tokens+63)//64)*64)
+
+def capture(command):
+    result = subprocess.run(command, capture_output=True, text=True)
+    return dict(command=command,exit_code=result.returncode,stdout=result.stdout,stderr=result.stderr)
+
+# Refuse to contend with a live owner, and never stop someone else's process.
+probe = subprocess.run(['pgrep', '-fl', 'ParticleCLI|ParticlePack|TurboFieldfareServer|TurboFieldfareMac|TurboFieldfareDecodeService|TurboFieldfareCLI|swiftpm-testing-helper|mlx_lm|mlx-lm'], capture_output=True, text=True)
+if probe.returncode not in (0, 1):
+    sys.exit('Cannot check active model processes: ' + probe.stderr.strip())
+if probe.returncode == 0:
+    sys.exit('A model or test process is running. Enter /quit in your Particle chat first.\n' + probe.stdout.strip())
+if not (args.model / 'verified-install.json').is_file():
+    sys.exit('A completed, verified .particle pack is required.')
+if not (args.ssd_cache / 'mirror-v1/mirror-receipt.json').is_file():
+    sys.exit('Prepare the complete SSD mirror before this comparison.')
+pressure = subprocess.run(['memory_pressure', '-Q'], capture_output=True, text=True)
+free = re.search(r'free percentage:\s*(\d+)', pressure.stdout)
+if pressure.returncode or not free or int(free[1]) < 25:
+    sys.exit('Memory headroom is too low or unavailable for a model comparison.')
+
+stamp = datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%dT%H%M%SZ')
+output = (args.output or ROOT / 'docs/validation/particle-hybrid-decode' / stamp).resolve()
+output.mkdir(parents=True, exist_ok=False)
+wrapper = ROOT / 'Scripts/particle'
+doctor = subprocess.run([str(wrapper), 'doctor'], cwd=ROOT, capture_output=True, text=True)
+(output / 'doctor.log').write_text(doctor.stdout + doctor.stderr)
+if doctor.returncode:
+    sys.exit('Toolchain preflight failed; see ' + str(output / 'doctor.log'))
+
+config = dict(histories=[args.history], suffixes=[args.suffix], rounds=args.rounds, decodeTokens=args.decode_tokens)
+config_path = output / 'configuration.json'
+config_path.write_text(json.dumps(config, indent=2) + '\n')
+seed = 'Explain how a computer learns from examples. Include a practical example and a short Python sketch. '
+common = [str(wrapper), 'run', '--model', str(args.model), '--storage-profile', 'sd-hybrid',
+          '--ssd-cache-policy', 'mirror', '--ssd-cache-mib', '18432', '--ssd-cache', str(args.ssd_cache),
+          '--expert-cache-slots', str(args.slots), '--ssd-read-workers', str(args.ssd_workers), '--max-context', str(context), '--raw', '--prompt', seed]
+candidate = ['--attention', 'reference', '--projection', 'vector', '--deferred-decode', '--grouped-experts']
+if args.ffn_vector: candidate += ['--ffn-vector']
+commands = [common + ['--max-new', '1', '--compare-prefill', '--prefill-chunk', '4'] + candidate,
+            common + ['--max-new', str(args.decode_tokens), '--prefill-chunk', '128', '--benchmark-session', str(config_path)] + candidate]
+
+def digest(path):
+    h = hashlib.sha256()
+    with path.open('rb') as handle:
+        for chunk in iter(lambda: handle.read(4 * 1024 * 1024), b''):
+            h.update(chunk)
+    return h.hexdigest()
+
+fingerprints = {str(p.relative_to(ROOT)): digest(p) for p in sorted((ROOT / 'Sources/ParticleCore').rglob('*.swift'))}
+for p in sorted((ROOT / 'Sources/ParticleCore/Metal').glob('*.metal')):
+    fingerprints[str(p.relative_to(ROOT))] = digest(p)
+for p in [ROOT/'Scripts/particle-hybrid-check',ROOT/'Sources/ParticleCLI/main.swift',ROOT/'Package.swift']:
+    fingerprints[str(p.relative_to(ROOT))] = digest(p)
+manifest = dict(commands=commands, started_at=stamp, memory_pressure=pressure.stdout,
+                source_sha256=fingerprints, model_manifest_sha256=digest(args.model / 'manifest.json'),
+                configuration=config, experimental=True, ram_slots=args.slots, ssd_workers=args.ssd_workers,
+                environment=dict(macOS=platform.mac_ver()[0],machine=platform.machine(),
+                    hardware=capture(['sysctl','-n','machdep.cpu.brand_string']),ram=capture(['sysctl','-n','hw.memsize']),
+                    power=capture(['pmset','-g','batt']),thermal=capture(['pmset','-g','therm']),
+                    swap_before=capture(['sysctl','vm.swapusage']),vm_before=capture(['vm_stat'])),
+                notes='One runner at a time. Exact native weights, FP32 KV, selected fixed RAM slots/SSD workers, one prepared SSD mirror. No cache purge. Reference/candidate alternate AB/BA for the selected rounds. Synthetic repeated benchmark history and forced decode steps are diagnostic, not a natural-answer or sustained target qualification.')
+manifest_path = output / 'manifest.json'
+manifest_path.write_text(json.dumps(manifest, indent=2) + '\n')
+print('Results:', output, flush=True)
+for name, command in zip(['parity', 'comparison'], commands):
+    print('Running', name, '(one model process).', flush=True)
+    with (output / (name + '.json')).open('w') as result, (output / (name + '.log')).open('w') as progress:
+        run = subprocess.run(command, cwd=ROOT, stdout=result, stderr=progress)
+    manifest[name + '_exit_code'] = run.returncode
+    manifest_path.write_text(json.dumps(manifest, indent=2) + '\n')
+    if run.returncode:
+        sys.exit(name + ' failed; inspect ' + str(output / (name + '.log')) + '. Candidate remains experimental.')
+
+rows = json.loads((output / 'comparison.json').read_text())
+reference = [r for r in rows if r['mode'] == 'reference']
+other = [r for r in rows if r['mode'] == 'candidate']
+assert len(reference) == len(other) == args.rounds, 'Unexpected comparison pass count'
+control_time = statistics.median(r['decodeSeconds'] for r in reference)
+candidate_time = statistics.median(r['decodeSeconds'] for r in other)
+summary = dict(reference_median_tokens_per_second=args.decode_tokens/control_time,
+               candidate_median_tokens_per_second=args.decode_tokens/candidate_time,
+               median_decode_speedup=control_time/candidate_time,
+               all_parity_checks_passed=all(r['parityPassed'] for r in rows),
+               reference_source_bytes=sum(r['sourceBytes'] for r in reference),
+               candidate_source_bytes=sum(r['sourceBytes'] for r in other),
+               candidate_ssd_read_bytes=sum(r['ssdReadBytes'] for r in other),
+               default_promotion=False,
+               notes='Short-history diagnostic only; defaults unchanged. Other contexts/workloads and natural completions must qualify separately.')
+for name, passes in [('reference',reference),('candidate',other)]:
+    rates = [row['decodeSteps']/row['decodeSeconds'] for row in passes]
+    summary[name+'_tokens_per_second_by_pass'] = rates
+    summary[name+'_throughput_range_ratio'] = max(rates)/min(rates)
+    if all('decodeReadWaitSeconds' in row for row in passes):
+        summary[name+'_median_read_wait_ms_per_token'] = statistics.median(row['decodeReadWaitSeconds']*1000/row['decodeSteps'] for row in passes)
+        summary[name+'_median_gpu_wait_ms_per_token'] = statistics.median(row['decodeGPUWaitSeconds']*1000/row['decodeSteps'] for row in passes)
+        summary[name+'_median_SSD_MiB_per_decode_token'] = statistics.median(row['decodeSSDReadBytes']/1048576/row['decodeSteps'] for row in passes)
+manifest['environment']['swap_after'] = capture(['sysctl','vm.swapusage'])
+manifest['environment']['vm_after'] = capture(['vm_stat'])
+manifest['environment']['memory_pressure_after'] = capture(['memory_pressure','-Q'])
+summary['timing_variability_flag'] = any(summary[name+'_throughput_range_ratio'] > 1.10 for name in ['reference','candidate'])
+summary['variability_note'] = 'Inspect individual passes and system swap changes; a median can hide severe slowdowns. Cross-run differences do not isolate a flag or hardware effect.'
+manifest_path.write_text(json.dumps(manifest,indent=2)+'\n')
+(output / 'summary.json').write_text(json.dumps(summary, indent=2) + '\n')
+print(json.dumps(summary, indent=2), flush=True)
+if not summary['all_parity_checks_passed']:
+    sys.exit('Full-logit or continuation parity failed. Do not adopt this candidate.')

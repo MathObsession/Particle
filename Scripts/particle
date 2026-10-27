@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+set -euo pipefail
+workspace="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$workspace/Scripts/particle-env.sh"
+package="$workspace"
+action="${1:-doctor}"
+if [[ $# -gt 0 ]]; then shift; fi
+mkdir -p "$PARTICLE_BUILD_ROOT/SwiftPM" "$PARTICLE_CACHE_ROOT/SwiftPM" "$CLANG_MODULE_CACHE_PATH" "$SWIFTPM_MODULECACHE_OVERRIDE"
+common=(--package-path "$package" --scratch-path "$PARTICLE_BUILD_ROOT/SwiftPM" --cache-path "$PARTICLE_CACHE_ROOT/SwiftPM")
+case "$action" in
+  doctor)
+    printf 'Particle workspace: %s\nDeveloper tools: %s\nModel: %s\nBuild: %s\n' "$workspace" "$DEVELOPER_DIR" "$PARTICLE_MODEL_PATH" "$PARTICLE_BUILD_ROOT"
+    [[ -f "$PARTICLE_MODEL_PATH" || ( -d "$PARTICLE_MODEL_PATH" && -f "$PARTICLE_MODEL_PATH/manifest.json" && -f "$PARTICLE_MODEL_PATH/verified-install.json" ) ]] || { printf 'Model file or verified pack is missing.\n' >&2; exit 1; }
+    if ! swift --version; then
+      printf 'Selected compiler could not launch. Try: PARTICLE_TOOLCHAIN=clt Scripts/particle doctor\n' >&2
+      exit 1
+    fi
+    /usr/bin/xcrun --sdk macosx --show-sdk-path
+    if ! /usr/bin/xcrun --find metal; then
+      printf 'Metal command-line compiler is unavailable; GPU shader validation remains pending.\n' >&2
+    fi
+    df -h "$PARTICLE_SD_ROOT"
+    ;;
+  build) exec swift build "${common[@]}" --jobs 2 "$@" ;;
+  test) exec "$package/Scripts/test.sh" --scratch-path "$PARTICLE_BUILD_ROOT/SwiftPM" --cache-path "$PARTICLE_CACHE_ROOT/SwiftPM" --jobs 2 "$@" ;;
+  run|prepare-cache)
+    binary="$PARTICLE_BUILD_ROOT/SwiftPM/release/ParticleCLI"
+    [[ -x "$binary" ]] || { printf 'Build the CLI first: Scripts/particle build -c release --product ParticleCLI\n' >&2; exit 1; }
+    if [[ "$action" = prepare-cache ]]; then exec "$binary" --prepare-cache "$@"; fi
+    exec "$binary" "$@"
+    ;;
+  pack|verify)
+    binary="$PARTICLE_BUILD_ROOT/SwiftPM/release/ParticlePack"
+    [[ -x "$binary" ]] || { printf 'Build the packer first: Scripts/particle build -c release --product ParticlePack\n' >&2; exit 1; }
+    if [[ "$action" = verify ]]; then exec "$binary" --verify "$@"; fi
+    exec "$binary" "$@"
+    ;;
+  resolve) exec swift package "${common[@]}" resolve --force-resolved-versions "$@" ;;
+  manifest) exec swift package "${common[@]}" dump-package "$@" ;;
+  xcode) exec /usr/bin/open -a "$PARTICLE_SD_ROOT/Xcode.app" "$package/Package.swift" ;;
+  *) printf 'Usage: Scripts/particle {doctor|build|run|pack|verify|prepare-cache|test|resolve|manifest|xcode} [options]\n' >&2; exit 2 ;;
+esac

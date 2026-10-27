@@ -1,0 +1,81 @@
+# Swift Package Manager
+.build/
+.swiftpm/
+*.xcodeproj
+*.xcworkspace
+
+# Xcode
+DerivedData/
+xcuserdata/
+*.xcuserstate
+*.xcscheme
+
+# macOS
+.DS_Store
+
+# Build artifacts
+/dist/
+*.o
+*.a
+*.dylib
+*.metallib
+
+# Model weights / large blobs
+*.safetensors
+*.gguf
+*.bin
+*.npz
+*.pdf
+weights/
+models/
+Model/
+!Tests/**/Model/
+# Repacked .gturbo directories (manifest.json/layout.json inside aren't caught by *.bin)
+*.gturbo/
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*~
+
+# Logs / scratch
+*.log
+benchmark-results/
+/scratch
+tmp/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Particle workspace
+.DS_Store
+/Particle.xcworkspace/xcuserdata/
+
+# Particle local runtime, credentials and validation artifacts
+*.particle
+*.particle/
+*.sqlite
+*.sqlite-*
+*.db
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.mobileprovision
+*.xcarchive/
+*.app/
+*.zip
+*.dmg
+*.xip
+/docs/validation/
+/docs/particleone/validation*/
+/docs/particleone/icon-update/
+/docs/particleone/standalone/
+/docs/setup/
+
+# Development build symlink
+.build

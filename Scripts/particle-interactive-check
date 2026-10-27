@@ -1,0 +1,86 @@
+#!/usr/bin/env python3
+"""Serial real-model regression for idle, KV, context, SIGINT, and /new."""
+import json
+import os
+from pathlib import Path
+import re
+import selectors
+import signal
+import subprocess
+import threading
+import time
+
+root=Path(__file__).resolve().parent.parent
+import tempfile
+base=Path(os.environ.get('PARTICLE_INTERACTIVE_LOG_BASE',str(Path(tempfile.mkdtemp(prefix='particle-interactive-'))/'check')))
+base.parent.mkdir(parents=True,exist_ok=True)
+command=[str(root/'Scripts/particle'),'run','--interactive','--prompt',os.environ.get('PARTICLE_INTERACTIVE_PROMPT','Hi'),'--max-new',os.environ.get('PARTICLE_INTERACTIVE_MAX_NEW','1'),'--max-context','512','--attention','fast','--projection','vector','--gpu-greedy','--timings-json',str(base.with_suffix('.jsonl'))]
+if os.environ.get('PARTICLE_NO_IDLE')=='1': command += ['--no-idle-preparation']
+base.with_suffix('.jsonl').write_text('')
+base.with_suffix('.command.json').write_text(json.dumps(command,indent=2)+'\n')
+doctor=subprocess.run([str(root/'Scripts/particle'),'doctor'],cwd=root,capture_output=True,text=True)
+base.with_suffix('.doctor.log').write_text(doctor.stdout+doctor.stderr)
+if doctor.returncode: raise SystemExit('Toolchain/model preflight failed; see doctor log')
+pressure=subprocess.run(['memory_pressure','-Q'],capture_output=True,text=True)
+base.with_suffix('.memory.log').write_text(pressure.stdout+pressure.stderr)
+free=re.search(r'free percentage:\s*(\d+)',pressure.stdout)
+if pressure.returncode or not free or int(free[1])<25: raise SystemExit('Memory pressure is too high or unavailable for a real-model test')
+preflight=subprocess.run(['pgrep','-fl','ParticleCLI|TurboFieldfareServer|TurboFieldfareMac|TurboFieldfareDecodeService|TurboFieldfareCLI|swiftpm-testing-helper|mlx_lm|mlx-lm'],capture_output=True,text=True)
+if preflight.returncode==0:
+ raise SystemExit('Another model/test process is running:\n'+preflight.stdout)
+print('Writing integration diagnostics to',base.parent,flush=True)
+proc=subprocess.Popen(command,cwd=root,stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+selector=selectors.DefaultSelector()
+selector.register(proc.stdout,selectors.EVENT_READ,'stdout')
+selector.register(proc.stderr,selectors.EVENT_READ,'stderr')
+files={name:base.with_suffix('.'+name+'.log').open('wb') for name in ['stdout','stderr']}
+pending=b''; turns=0; stage=0; overflow=False; retained=False; cancelled=False; reset=False
+start=time.monotonic()
+
+def send(line):
+ try:
+  proc.stdin.write((line+'\n').encode()); proc.stdin.flush()
+ except (BrokenPipeError,ValueError): pass
+
+while selector.get_map():
+ for key,_ in selector.select(timeout=1):
+  chunk=os.read(key.fileobj.fileno(),65536)
+  if not chunk:
+   selector.unregister(key.fileobj); continue
+  files[key.data].write(chunk); files[key.data].flush()
+  if key.data!='stderr': continue
+  pending+=chunk
+  while b'\n' in pending:
+   raw,pending=pending.split(b'\n',1); line=raw.decode('utf-8',errors='replace')
+   if 'Particle: prompt=' in line:
+    turns+=1; print('Completed response',turns,line,flush=True)
+   if line.startswith('You>'):
+    if turns==1 and stage==0:
+     stage=1; threading.Timer(float(os.environ.get('PARTICLE_INTERACTIVE_DELAY','0.15')),send,args=('Hi',)).start()
+    elif turns==2 and stage==1:
+     stage=2; send('word '*2000)
+   if stage==2 and 'exceeds context' in line:
+    overflow=True; stage=3; send('Yo')
+   elif stage==3 and 'Particle: reusing ' in line:
+    match=re.search(r'reusing (\d+) KV',line); retained=bool(match and int(match[1])>0)
+    print('Retained prefix after context error:',line,flush=True)
+    stage=4; proc.send_signal(signal.SIGINT)
+   elif stage==4 and 'turn cancelled' in line:
+    cancelled=True; send('/new'); send('/quit'); proc.stdin.close()
+   if 'Particle: new chat;' in line: reset=True
+ # Only signal our own child, using the application's supported cancellation.
+ # A diagnostic exceeding 30 minutes is cancelled rather than killed.
+ if time.monotonic()-start>1800 and stage<4:
+  stage=4; proc.send_signal(signal.SIGINT); send('/quit')
+code=proc.wait()
+for file in files.values(): file.close()
+events=[]
+if base.with_suffix('.jsonl').exists():
+ events=[json.loads(line) for line in base.with_suffix('.jsonl').read_text().splitlines()]
+report=dict(exit_code=code,completed_responses=turns,context_error=overflow,retained_kv_after_context_error=retained,
+            generation_cancelled=cancelled,new_chat=reset,idle_interrupts=sum(e.get('event')=='idle' and e.get('status')=='interrupted' for e in events),
+            incremental_turns=sum(e.get('event')=='turn' and e.get('cached_template_tokens',0)>0 for e in events),seconds=time.monotonic()-start)
+base.with_suffix('.summary.json').write_text(json.dumps(report,indent=2)+'\n')
+print(json.dumps(report,indent=2),flush=True)
+if code or turns<2 or not all([overflow,retained,cancelled,reset]) or not report['incremental_turns']:
+ raise SystemExit('Interactive integration check failed')

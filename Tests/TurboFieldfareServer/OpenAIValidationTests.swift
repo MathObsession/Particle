@@ -1,0 +1,1432 @@
+import Foundation
+import Testing
+@testable import TurboFieldfare
+@testable import TurboFieldfareServerCore
+
+@Suite("OpenAI request validation")
+struct OpenAIValidationTests {
+    @Test func capturedOpenCodeInitialRequestValidates() throws {
+        let request = try fixture("opencode-1.15.11-initial.json")
+        let validated = try OpenAIRequestValidator.validate(
+            request, modelID: "gemma-4-26b-a4b-it")
+        #expect(validated.stream)
+        #expect(validated.includeUsage)
+        #expect(validated.tools.count == 1)
+        #expect(validated.maximumCompletionTokens == 4096)
+    }
+
+    @Test func capturedOpenCodeToolResultValidates() throws {
+        let request = try fixture("opencode-1.15.11-tool-result.json")
+        let validated = try OpenAIRequestValidator.validate(
+            request, modelID: "gemma-4-26b-a4b-it")
+        #expect(validated.messages.count == 4)
+        #expect(validated.messages[2].toolCalls.count == 1)
+        #expect(validated.messages[3].toolCallID == "call_0123456789abcdef01234567")
+    }
+
+    @Test func capturedOpenCodePromptFits16KWith4096Completion() async throws {
+        let request = try fixture("opencode-1.15.11-tool-result.json")
+        let validated = try OpenAIRequestValidator.validate(
+            request, modelID: "gemma-4-26b-a4b-it")
+        let tokenizer = try await GFTokenizer.load()
+        let ids = try tokenizer.encodeToolChat(
+            messages: validated.messages, tools: validated.tools)
+        #expect(ids.count <= 16_384 - 4_096)
+    }
+
+    @Test func capturedDshInitialRequestValidatesAndRenders() async throws {
+        // DeepSeek Harness 0.1.1-rc.1's `workflow` tool declares its `args`
+        // parameter as a bare object node with `additionalProperties` — the
+        // shape that crashed template rendering with "upper filter requires
+        // string" (PR 138). Rendering here is the regression: the fixture
+        // must survive the full validate + render path.
+        let request = try fixture("dsh-0.1.1-rc.1-initial.json")
+        let validated = try OpenAIRequestValidator.validate(
+            request, modelID: "gemma-4-26b-a4b-it")
+        #expect(validated.stream)
+        #expect(validated.includeUsage)
+        #expect(validated.tools.count == 25)
+        let workflow = try #require(validated.tools.first { $0.name == "workflow" })
+        let args = workflow.parameters.objectValue?["properties"]?
+            .objectValue?["args"]?.objectValue
+        #expect(args?["properties"] == .object([:]))
+        let tokenizer = try await GFTokenizer.load()
+        _ = try tokenizer.encodeToolChat(
+            messages: validated.messages, tools: validated.tools)
+    }
+
+    @Test func capturedDshToolResultValidatesAndRenders() async throws {
+        let request = try fixture("dsh-0.1.1-rc.1-tool-result.json")
+        let validated = try OpenAIRequestValidator.validate(
+            request, modelID: "gemma-4-26b-a4b-it")
+        #expect(validated.messages.count == 5)
+        let call = try #require(
+            validated.messages.first { !$0.toolCalls.isEmpty }?.toolCalls.first)
+        #expect(call.id == "call_0123456789abcdef01234567")
+        let tokenizer = try await GFTokenizer.load()
+        _ = try tokenizer.encodeToolChat(
+            messages: validated.messages, tools: validated.tools)
+    }
+
+    @Test func requiredToolChoiceIsRejected() throws {
+        let data = Data(#"""
+        {"model":"m","messages":[{"role":"user","content":"x"}],"tool_choice":"required"}
+        """#.utf8)
+        let request = try JSONDecoder().decode(OpenAIChatRequest.self, from: data)
+        #expect(throws: ServerRequestError.self) {
+            try OpenAIRequestValidator.validate(request, modelID: "m")
+        }
+    }
+
+    @Test func hyphenatedToolNamesValidateInDefinitionsAndHistory() throws {
+        let data = Data(#"""
+        {
+          "model":"m",
+          "messages":[
+            {"role":"user","content":"resolve it"},
+            {"role":"assistant","tool_calls":[{
+              "id":"call_0123456789abcdef01234567",
+              "type":"function",
+              "function":{"name":"resolve-library-id","arguments":"{\"name\":\"swift\"}"}
+            }]},
+            {"role":"tool","tool_call_id":"call_0123456789abcdef01234567","content":"42"}
+          ],
+          "tools":[{
+            "type":"function",
+            "function":{
+              "name":"resolve-library-id",
+              "parameters":{"type":"object","properties":{"name":{"type":"string"}}}
+            }
+          }]
+        }
+        """#.utf8)
+        let request = try JSONDecoder().decode(OpenAIChatRequest.self, from: data)
+        let validated = try OpenAIRequestValidator.validate(request, modelID: "m")
+        #expect(validated.tools.first?.name == "resolve-library-id")
+        #expect(validated.messages[1].toolCalls.first?.name == "resolve-library-id")
+    }
+
+    @Test func invalidToolNameErrorIdentifiesTheName() throws {
+        for invalid in ["bad name", "bad.name", "bad@name"] {
+            let data = Data(#"""
+            {
+              "model":"m",
+              "messages":[{"role":"user","content":"x"}],
+              "tools":[{
+                "type":"function",
+                "function":{"name":"\#(invalid)","parameters":{"type":"object"}}
+              }]
+            }
+            """#.utf8)
+            let request = try JSONDecoder().decode(OpenAIChatRequest.self, from: data)
+            do {
+                _ = try OpenAIRequestValidator.validate(request, modelID: "m")
+                Issue.record("invalid tool name was accepted: \(invalid)")
+            } catch let error as ServerRequestError {
+                #expect(error.envelope.error.code == "invalid_tool_name")
+                #expect(error.envelope.error.message.contains(String(reflecting: invalid)))
+            }
+        }
+    }
+
+    @Test func acceptsLeadingSystemAndDeveloperGuidance() throws {
+        let data = Data(#"""
+        {"model":"m","messages":[
+          {"role":"system","content":"system"},
+          {"role":"developer","content":"developer"},
+          {"role":"user","content":"hello"}
+        ]}
+        """#.utf8)
+        let request = try JSONDecoder().decode(OpenAIChatRequest.self, from: data)
+        let validated = try OpenAIRequestValidator.validate(request, modelID: "m")
+        #expect(validated.messages.map(\.role) == [.system, .developer, .user])
+    }
+
+    @Test func rejectsLateDeveloperGuidance() throws {
+        let data = Data(#"""
+        {"model":"m","messages":[
+          {"role":"user","content":"hello"},
+          {"role":"developer","content":"late"}
+        ]}
+        """#.utf8)
+        let request = try JSONDecoder().decode(OpenAIChatRequest.self, from: data)
+        #expect(throws: ServerRequestError.self) {
+            try OpenAIRequestValidator.validate(request, modelID: "m")
+        }
+    }
+
+    @Test func wideIntegerToolArgumentsRoundTripExactly() async throws {
+        let expected = "9007199254740993"
+        let parsed = try GemmaToolCallParser().parse(
+            "call:lookup{id:\(expected)}",
+            allowedTools: ["lookup"],
+            id: "call_0123456789abcdef01234567")
+        #expect(parsed.argumentsJSON.contains(#""id":\#(expected)"#))
+        let signedMinimum = String(Int64.min)
+        let signedMaximum = String(Int64.max)
+        let unsignedMaximum = String(UInt64.max)
+        let edges = try GemmaToolCallParser().parse(
+            "call:lookup{minimum:\(signedMinimum),maximum:\(signedMaximum),unsigned:\(unsignedMaximum)}",
+            allowedTools: ["lookup"],
+            id: "call_0123456789abcdef01234568")
+        #expect(edges.arguments.objectValue?["minimum"] == .integer(.min))
+        #expect(edges.arguments.objectValue?["maximum"] == .integer(.max))
+        #expect(edges.arguments.objectValue?["unsigned"] == .unsignedInteger(.max))
+        let encodedEdges = try edges.arguments.encoded()
+        #expect(encodedEdges.contains(signedMinimum))
+        #expect(encodedEdges.contains(signedMaximum))
+        #expect(encodedEdges.contains(unsignedMaximum))
+        #expect(try JSONDecoder().decode(
+            JSONValue.self,
+            from: Data(encodedEdges.utf8)) == edges.arguments)
+        for malformed in ["+1", "01", "1.", ".1", "1e", "--1"] {
+            #expect(throws: GemmaToolCallParserError.self) {
+                try GemmaToolCallParser().parse(
+                    "call:lookup{id:\(malformed)}",
+                    allowedTools: ["lookup"],
+                    id: "call_0123456789abcdef01234570")
+            }
+        }
+
+        let data = Data(#"""
+        {
+          "model":"m",
+          "messages":[
+            {"role":"user","content":"lookup"},
+            {"role":"assistant","tool_calls":[{
+              "id":"call_0123456789abcdef01234567",
+              "type":"function",
+              "function":{"name":"lookup","arguments":"{\"id\":9007199254740993}"}
+            }]}
+          ],
+          "tools":[{
+            "type":"function",
+            "function":{
+              "name":"lookup",
+              "parameters":{"type":"object","properties":{"id":{"type":"integer"}}}
+            }
+          }]
+        }
+        """#.utf8)
+        let request = try JSONDecoder().decode(OpenAIChatRequest.self, from: data)
+        let validated = try OpenAIRequestValidator.validate(request, modelID: "m")
+        let call = try #require(validated.messages[1].toolCalls.first)
+        #expect(try call.arguments.encoded().contains(#""id":\#(expected)"#))
+        let tokenizer = try await GFTokenizer.load()
+        let rendered = tokenizer.decode(
+            try tokenizer.encodeToolChat(
+                messages: validated.messages,
+                tools: validated.tools),
+            skipSpecialTokens: false)
+        #expect(rendered.contains(expected))
+
+        let unrepresentableHistory = Data(#"""
+        {
+          "model":"m",
+          "messages":[
+            {"role":"user","content":"lookup"},
+            {"role":"assistant","tool_calls":[{
+              "id":"call_0123456789abcdef01234569",
+              "type":"function",
+              "function":{"name":"lookup","arguments":"{\"id\":18446744073709551615}"}
+            }]}
+          ],
+          "tools":[{
+            "type":"function",
+            "function":{
+              "name":"lookup",
+              "parameters":{"type":"object","properties":{"id":{"type":"integer"}}}
+            }
+          }]
+        }
+        """#.utf8)
+        let rejected = try JSONDecoder().decode(
+            OpenAIChatRequest.self,
+            from: unrepresentableHistory)
+        #expect(throws: ServerRequestError.self) {
+            try OpenAIRequestValidator.validate(rejected, modelID: "m")
+        }
+    }
+
+    @Test func acceptedNonIdentifierParameterKeysParseAndRender() async throws {
+        let data = Data(#"""
+        {
+          "model":"m",
+          "messages":[{"role":"user","content":"lookup"}],
+          "tools":[{
+            "type":"function",
+            "function":{
+              "name":"lookup",
+              "parameters":{
+                "type":"object",
+                "properties":{
+                  "$id":{"type":"string"},
+                  "file-path":{"type":"string"},
+                  "nested":{"type":"object","properties":{"child-key":{"type":"integer"}}}
+                }
+              }
+            }
+          }]
+        }
+        """#.utf8)
+        let request = try JSONDecoder().decode(OpenAIChatRequest.self, from: data)
+        let validated = try OpenAIRequestValidator.validate(request, modelID: "m")
+        let tokenizer = try await GFTokenizer.load()
+        _ = try tokenizer.encodeToolChat(
+            messages: validated.messages,
+            tools: validated.tools)
+        let parsed = try GemmaToolCallParser().parse(
+            #"call:lookup{$id:<|"|>item<|"|>,file-path:<|"|>/tmp/x<|"|>,nested:{child-key:7}}"#,
+            allowedTools: ["lookup"],
+            id: "call_0123456789abcdef01234567")
+        #expect(parsed.arguments.objectValue?["$id"] == .string("item"))
+        #expect(parsed.arguments.objectValue?["file-path"] == .string("/tmp/x"))
+    }
+
+    @Test func stringConstantUnionAdaptsToEnumAndRenders() async throws {
+        let data = Data(#"""
+        {
+          "model":"m",
+          "messages":[{"role":"user","content":"search"}],
+          "tools":[{
+            "type":"function",
+            "function":{
+              "name":"vcc_recall",
+              "description":"",
+              "parameters":{
+                "type":"object",
+                "properties":{
+                  "scope":{
+                    "anyOf":[
+                      {"type":"string","const":"lineage"},
+                      {"type":"string","const":"all"}
+                    ],
+                    "description":""
+                  }
+                }
+              }
+            }
+          }]
+        }
+        """#.utf8)
+        let request = try JSONDecoder().decode(OpenAIChatRequest.self, from: data)
+        let validated = try OpenAIRequestValidator.validate(request, modelID: "m")
+        let tool = try #require(validated.tools.first)
+        let properties = try #require(tool.parameters.objectValue?["properties"]?.objectValue)
+        let scope = try #require(properties["scope"]?.objectValue)
+        #expect(scope["type"] == .string("string"))
+        #expect(scope["enum"] == .array([.string("lineage"), .string("all")]))
+        #expect(scope["anyOf"] == nil)
+
+        let tokenizer = try await GFTokenizer.load()
+        let rendered = tokenizer.decode(
+            try tokenizer.encodeToolChat(
+                messages: validated.messages,
+                tools: validated.tools),
+            skipSpecialTokens: false)
+        #expect(rendered.contains("lineage"))
+        #expect(rendered.contains("all"))
+    }
+
+    @Test func nullableToolSchemasAdaptWithoutChangingConstraints() throws {
+        let typeArray = try JSONDecoder().decode(JSONValue.self, from: Data(#"""
+        {
+          "type":"object",
+          "properties":{
+            "name":{"type":["null","string"],"minLength":2}
+          }
+        }
+        """#.utf8))
+        let adapted = try GemmaToolSchema.adapted(typeArray, toolName: "lookup")
+        let name = adapted.objectValue?["properties"]?.objectValue?["name"]?.objectValue
+        #expect(name?["type"] == .string("string"))
+        #expect(name?["nullable"] == .bool(true))
+        #expect(name?["minLength"] == .integer(2))
+        #expect(try GemmaToolSchema.adapted(adapted, toolName: "lookup") == adapted)
+
+        let anyOf = try JSONDecoder().decode(JSONValue.self, from: Data(#"""
+        {
+          "type":"object",
+          "properties":{
+            "limit":{"description":"limit","anyOf":[
+              {"type":"integer","minimum":1},
+              {"type":"null"}
+            ]}
+          }
+        }
+        """#.utf8))
+        let anyOfAdapted = try GemmaToolSchema.adapted(anyOf, toolName: "lookup")
+        let limit = anyOfAdapted.objectValue?["properties"]?.objectValue?["limit"]?.objectValue
+        #expect(limit?["type"] == .string("integer"))
+        #expect(limit?["nullable"] == .bool(true))
+        #expect(limit?["minimum"] == .integer(1))
+        #expect(limit?["description"] == .string("limit"))
+        #expect(limit?["anyOf"] == nil)
+
+        let nestedOneOf = try JSONDecoder().decode(JSONValue.self, from: Data(#"""
+        {
+          "type":"object",
+          "properties":{
+            "names":{"type":"array","items":{"oneOf":[
+              {"type":"null"},
+              {"type":"string","minLength":1}
+            ]}}
+          }
+        }
+        """#.utf8))
+        let nestedAdapted = try GemmaToolSchema.adapted(nestedOneOf, toolName: "lookup")
+        let item = nestedAdapted.objectValue?["properties"]?.objectValue?["names"]?
+            .objectValue?["items"]?.objectValue
+        #expect(item?["type"] == .string("string"))
+        #expect(item?["nullable"] == .bool(true))
+        #expect(item?["minLength"] == .integer(1))
+        #expect(item?["oneOf"] == nil)
+    }
+
+    @Test func bareObjectNodesWithSiblingKeywordsRender() async throws {
+        // Regression: the chat template routes an object node without
+        // `properties` through its filter_keys branch, which iterates the
+        // node's own keys as property schemas; preserved keywords such as
+        // `additionalProperties`, `default`, or `title` then hit
+        // `value['type'] | upper` on a non-string and rendering fails with
+        // Jinja runtime("upper filter requires string") — the 500 reported by
+        // a DeepSeek Harness user in PR 138. Without the injected empty
+        // `properties` mapping, encodeToolChat throws here.
+        let data = Data(#"""
+        {
+          "model":"m",
+          "messages":[{"role":"user","content":"go"}],
+          "tools":[{
+            "type":"function",
+            "function":{
+              "name":"probe",
+              "parameters":{
+                "type":"object",
+                "properties":{
+                  "closed":{"type":"object","additionalProperties":false},
+                  "annotated":{"type":"object","default":{},"title":"Config"},
+                  "bare":{"type":"object"}
+                }
+              }
+            }
+          }]
+        }
+        """#.utf8)
+        let request = try JSONDecoder().decode(OpenAIChatRequest.self, from: data)
+        let validated = try OpenAIRequestValidator.validate(request, modelID: "m")
+        let tokenizer = try await GFTokenizer.load()
+        let rendered = tokenizer.decode(
+            try tokenizer.encodeToolChat(
+                messages: validated.messages,
+                tools: validated.tools),
+            skipSpecialTokens: false)
+        // All three nodes render through the same branch a bare object node
+        // already used, so the output shape stays `properties:{}` (the
+        // detokenized text carries token-boundary spaces).
+        #expect(rendered.contains("closed:{ properties:{ },type:"))
+        #expect(rendered.contains("annotated:{ properties:{ },type:"))
+        #expect(rendered.contains("bare:{ properties:{ },type:"))
+    }
+
+    @Test func adaptedObjectNodesAlwaysCarryProperties() throws {
+        // Invariant: no adapted object node reaches the template without a
+        // `properties` mapping, so the template's key-iterating fallback
+        // branch is unreachable for adapter output.
+        let schemas = [
+            #"{"type":"object","properties":{"v":{"type":"object","additionalProperties":true}}}"#,
+            #"{"type":"object","properties":{"v":{"type":"array","items":{"type":"object","default":{"a":1}}}}}"#,
+            #"{"type":"object","properties":{"v":{"anyOf":[{"type":"object","examples":{"a":1}},{"type":"null"}]}}}"#,
+            #"{"type":"object","properties":{"v":{"type":"object","properties":{"w":{"type":"object"}}}}}"#,
+        ]
+        for encoded in schemas {
+            let schema = try JSONDecoder().decode(JSONValue.self, from: Data(encoded.utf8))
+            let adapted = try GemmaToolSchema.adapted(schema, toolName: "probe")
+            try assertObjectNodesCarryProperties(adapted, path: "parameters")
+            let again = try GemmaToolSchema.adapted(adapted, toolName: "probe")
+            #expect(again == adapted)
+        }
+    }
+
+    private func assertObjectNodesCarryProperties(
+        _ schema: JSONValue, path: String
+    ) throws {
+        guard case .object(let object) = schema else { return }
+        if object["type"] == .string("object") {
+            let properties = object["properties"]
+            #expect(properties?.objectValue != nil,
+                    "object node at \(path) lacks a properties mapping")
+        }
+        if case .object(let definitions)? = object["properties"] {
+            for (key, value) in definitions {
+                try assertObjectNodesCarryProperties(value, path: "\(path).properties.\(key)")
+            }
+        }
+        if let items = object["items"] {
+            try assertObjectNodesCarryProperties(items, path: "\(path).items")
+        }
+    }
+
+    @Test func unsupportedToolSchemaUnionsFailClosed() throws {
+        let schemas = [
+            #"{"type":"object","properties":{"v":{"anyOf":[{"type":"string"},{"type":"object"}]}}}"#,
+            #"{"type":"object","properties":{"args":{"anyOf":[{"type":"string"},{"type":"object","properties":{},"additionalProperties":true}]}}}"#,
+            #"{"type":"object","properties":{"v":{"oneOf":[{"type":"integer"},{"type":"number"}]}}}"#,
+            #"{"type":"object","properties":{"v":{"allOf":[{"type":"string"}]}}}"#,
+            #"{"type":"object","properties":{"v":{"description":"missing"}}}"#,
+            #"{"type":"object","properties":{"v":{"type":["string","number"]}}}"#,
+            #"{"type":"object","properties":{"v":{"type":["string","null"],"nullable":false}}}"#,
+            #"{"type":"object","properties":{"v":true}}"#,
+        ]
+        for encoded in schemas {
+            let schema = try JSONDecoder().decode(JSONValue.self, from: Data(encoded.utf8))
+            do {
+                _ = try GemmaToolSchema.adapted(schema, toolName: "unsafe")
+                Issue.record("unsupported schema was accepted: \(encoded)")
+            } catch let error as ServerRequestError {
+                #expect(error.envelope.error.code == "invalid_tool_schema")
+                #expect(error.envelope.error.param == "tools")
+            }
+        }
+    }
+
+    @Test func semanticsChangingNullableSchemasFailClosed() throws {
+        let schemas = [
+            #"{"type":["object","null"],"properties":{}}"#,
+            #"{"type":"object","properties":{"v":{"oneOf":[{"type":["string","null"]},{"type":"null"}]}}}"#,
+            #"{"type":"object","properties":{"v":{"oneOf":[{"type":"string","const":"same"},{"type":"string","const":"same"}]}}}"#,
+        ]
+        for encoded in schemas {
+            let schema = try JSONDecoder().decode(JSONValue.self, from: Data(encoded.utf8))
+            #expect(throws: ServerRequestError.self) {
+                try GemmaToolSchema.adapted(schema, toolName: "unsafe")
+            }
+        }
+    }
+
+    @Test func ambiguousParameterKeysFailValidation() throws {
+        let data = Data(#"""
+        {
+          "model":"m",
+          "messages":[{"role":"user","content":"lookup"}],
+          "tools":[{
+            "type":"function",
+            "function":{
+              "name":"lookup",
+              "parameters":{
+                "type":"object",
+                "allOf":[{
+                  "type":"object",
+                  "properties":{"bad:key":{"type":"string"}}
+                }]
+              }
+            }
+          }]
+        }
+        """#.utf8)
+        let request = try JSONDecoder().decode(OpenAIChatRequest.self, from: data)
+        #expect(throws: ServerRequestError.self) {
+            try OpenAIRequestValidator.validate(request, modelID: "m")
+        }
+    }
+
+    @Test func unknownTopLevelFieldIsAServerRequestErrorNotMalformedJSON() {
+        // Regression for issue 168: the synthesized decoder discarded
+        // `max_token`, so this body decoded cleanly and the request generated
+        // with the default 4096-token maximum under a 200. The error class is
+        // half the fix — a plain decoding failure reaches the HTTP layer as
+        // "malformed JSON request", which still hides the typo.
+        let data = Data(#"""
+        {"model":"m","messages":[{"role":"user","content":"x"}],"max_token":4}
+        """#.utf8)
+        do {
+            _ = try JSONDecoder().decode(OpenAIChatRequest.self, from: data)
+            Issue.record("unknown top-level field decoded instead of failing")
+        } catch ServerRequestError.invalid(let message, let param, let code) {
+            #expect(message.contains("max_token"))
+            #expect(param == "max_token")
+            #expect(code == "unknown_parameter")
+        } catch {
+            Issue.record("decoding threw \(error) rather than a ServerRequestError")
+        }
+    }
+
+    @Test func unknownFieldsAreNamedSortedAndTheFirstIsTheParam() {
+        let data = Data(#"""
+        {"model":"m","messages":[{"role":"user","content":"x"}],"zeta":1,"alpha":2}
+        """#.utf8)
+        do {
+            _ = try JSONDecoder().decode(OpenAIChatRequest.self, from: data)
+            Issue.record("unknown top-level fields decoded instead of failing")
+        } catch ServerRequestError.invalid(let message, let param, let code) {
+            // Sorted rather than in body order, so two callers sending the same
+            // typos in different orders get the same answer.
+            #expect(message.contains(#""alpha", "zeta""#))
+            #expect(param == "alpha")
+            #expect(code == "unknown_parameter")
+        } catch {
+            Issue.record("decoding threw \(error) rather than a ServerRequestError")
+        }
+    }
+
+    @Test(arguments: [
+        ("user", #""user":"caller-1""#),
+        ("store", #""store":false"#),
+        ("metadata", #""metadata":{"run":"7"}"#),
+        ("service_tier", #""service_tier":"auto""#),
+        ("prompt_cache_key", #""prompt_cache_key":"cache-1""#),
+        ("safety_identifier", #""safety_identifier":"user-hash""#),
+    ])
+    func toleratedBookkeepingFieldsDecode(_ key: String, _ field: String) throws {
+        let data = Data("""
+        {"model":"m","messages":[{"role":"user","content":"x"}],\(field)}
+        """.utf8)
+        let request = try JSONDecoder().decode(OpenAIChatRequest.self, from: data)
+        let validated = try OpenAIRequestValidator.validate(request, modelID: "m")
+        #expect(validated.messages.count == 1)
+        // Tolerated means ignored: the decoded request keeps no representation
+        // of the key, so nothing downstream can act on it.
+        let encoded = String(decoding: try JSONEncoder().encode(request), as: UTF8.self)
+        #expect(!encoded.contains("\"\(key)\":"))
+    }
+
+    @Test func responseFormatTextValidates() throws {
+        let data = Data(#"""
+        {"model":"m","messages":[{"role":"user","content":"x"}],
+         "response_format":{"type":"text"}}
+        """#.utf8)
+        let request = try JSONDecoder().decode(OpenAIChatRequest.self, from: data)
+        let validated = try OpenAIRequestValidator.validate(request, modelID: "m")
+        #expect(validated.messages.count == 1)
+    }
+
+    @Test(arguments: ["json_object", "json_schema"])
+    func responseFormatStructuredIsUnsupported(_ type: String) throws {
+        // Pre-fix this decoded and generated free text while the caller
+        // believed JSON was enforced; that silence is what issue 168 reports.
+        let data = Data("""
+        {"model":"m","messages":[{"role":"user","content":"x"}],
+         "response_format":{"type":"\(type)",
+           "json_schema":{"name":"s","schema":{"type":"object"}}}}
+        """.utf8)
+        let request = try JSONDecoder().decode(OpenAIChatRequest.self, from: data)
+        do {
+            _ = try OpenAIRequestValidator.validate(request, modelID: "m")
+            Issue.record("response_format \(type) validated")
+        } catch ServerRequestError.invalid(let message, let param, let code) {
+            #expect(message.contains("structured output"))
+            #expect(param == "response_format")
+            #expect(code == "unsupported_value")
+        }
+    }
+
+    @Test func responseFormatUnknownTypeIsInvalid() throws {
+        let data = Data(#"""
+        {"model":"m","messages":[{"role":"user","content":"x"}],
+         "response_format":{"type":"yaml"}}
+        """#.utf8)
+        let request = try JSONDecoder().decode(OpenAIChatRequest.self, from: data)
+        do {
+            _ = try OpenAIRequestValidator.validate(request, modelID: "m")
+            Issue.record("unknown response_format type validated")
+        } catch ServerRequestError.invalid(let message, let param, let code) {
+            #expect(message.contains("yaml"))
+            #expect(param == "response_format")
+            #expect(code == "invalid_value")
+        }
+    }
+
+    @Test func responseFormatWithoutTypeIsInvalid() throws {
+        // An object of the right shape missing its one required value is a
+        // request error, not malformed JSON.
+        let data = Data(#"""
+        {"model":"m","messages":[{"role":"user","content":"x"}],
+         "response_format":{}}
+        """#.utf8)
+        let request = try JSONDecoder().decode(OpenAIChatRequest.self, from: data)
+        do {
+            _ = try OpenAIRequestValidator.validate(request, modelID: "m")
+            Issue.record("response_format without a type validated")
+        } catch ServerRequestError.invalid(let message, let param, let code) {
+            #expect(message.contains("response_format.type is required"))
+            #expect(param == "response_format")
+            #expect(code == "invalid_value")
+        }
+    }
+
+    @Test(arguments: [
+        "logit_bias", "top_logprobs", "reasoning_effort", "verbosity", "modalities",
+        "audio", "prediction", "web_search_options",
+    ])
+    func knownUnsupportedFieldsAreRefusedAsUnsupportedNotUnknown(_ key: String) {
+        // These are real OpenAI parameters the server cannot honour. Answering
+        // "unrecognized" would send the caller hunting for a typo that is not
+        // there.
+        let data = Data("""
+        {"model":"m","messages":[{"role":"user","content":"x"}],"\(key)":{}}
+        """.utf8)
+        do {
+            _ = try JSONDecoder().decode(OpenAIChatRequest.self, from: data)
+            Issue.record("\(key) decoded instead of failing")
+        } catch ServerRequestError.invalid(let message, let param, let code) {
+            #expect(message == "\(key) is not supported")
+            #expect(param == key)
+            #expect(code == "unsupported_value")
+        } catch {
+            Issue.record("decoding threw \(error) rather than a ServerRequestError")
+        }
+    }
+
+    @Test func unknownKeyNamesAreBoundedAndQuoted() {
+        // The body cap is 5 MiB, so a caller must not be able to have an
+        // arbitrary slice of its own keys quoted back, and a key carrying a
+        // quote must not be able to render as two keys.
+        func rejection(_ extraKeys: String) -> (message: String, param: String?)? {
+            let data = Data("""
+            {"model":"m","messages":[{"role":"user","content":"x"}],\(extraKeys)}
+            """.utf8)
+            do {
+                _ = try JSONDecoder().decode(OpenAIChatRequest.self, from: data)
+                Issue.record("unknown fields decoded instead of failing")
+                return nil
+            } catch ServerRequestError.invalid(let message, let param, _) {
+                return (message, param)
+            } catch {
+                Issue.record("decoding threw \(error) rather than a ServerRequestError")
+                return nil
+            }
+        }
+
+        let long = String(repeating: "k", count: 200)
+        if let cut = rejection("\"\(long)\":1") {
+            #expect(cut.message.contains(String(repeating: "k", count: 64) + "..."))
+            #expect(!cut.message.contains(String(repeating: "k", count: 65)))
+            // The param is echoed straight out of the body, so it is bounded
+            // the same way the message is, unquoted because it names a field.
+            #expect(cut.param == String(repeating: "k", count: 64) + "...")
+            #expect(cut.param?.contains(String(repeating: "k", count: 65)) == false)
+        }
+
+        // Sorted lexicographically, so the first eight are 1, 10, 11, 12, 2-5.
+        let twelve = (1...12).map { "\"unknown\($0)\":1" }.joined(separator: ",")
+        if let many = rejection(twelve) {
+            #expect(many.message.contains(#""unknown1""#))
+            #expect(many.message.contains(#""unknown12""#))
+            #expect(!many.message.contains(#""unknown9""#))
+            #expect(many.message.contains("and 4 more"))
+        }
+
+        if let quoted = rejection(#""ba\"d":1"#) {
+            #expect(quoted.message.contains(#""ba\"d""#))
+            #expect(quoted.param == #"ba"d"#)
+        }
+    }
+
+    @Test(arguments: [
+        ("functions", #""functions":[{"name":"f","parameters":{"type":"object"}}]"#),
+        ("function_call", #""function_call":{"name":"f"}"#),
+    ])
+    func legacyFunctionsAreUnsupported(_ key: String, _ field: String) {
+        // Refused at decode time like every other unsupported key, so the
+        // answer names the legacy field even beside a mistyped declared one;
+        // a validator-side refusal lost to that field's DecodingError.
+        let data = Data("""
+        {"model":"m","messages":[{"role":"user","content":"x"}],\(field),"temperature":"hot"}
+        """.utf8)
+        do {
+            _ = try JSONDecoder().decode(OpenAIChatRequest.self, from: data)
+            Issue.record("legacy \(key) decoded instead of failing")
+        } catch ServerRequestError.invalid(let message, let param, let code) {
+            #expect(message.contains("use tools"))
+            #expect(param == key)
+            #expect(code == "unsupported_value")
+        } catch {
+            Issue.record("decoding threw \(error) rather than a ServerRequestError")
+        }
+    }
+
+    @Test func nestedExtrasStayTolerated() throws {
+        // Strictness is the top level only: clients routinely add keys inside
+        // messages, tool definitions, and stream_options, and the nested
+        // decoding here is deliberately structural.
+        let data = Data(#"""
+        {
+          "model":"m",
+          "messages":[{"role":"user","content":"x","annotations":[]}],
+          "stream_options":{"include_usage":true,"continuous_usage_stats":true},
+          "tools":[{"type":"function","function":{
+            "name":"probe",
+            "strict":true,
+            "parameters":{"type":"object","properties":{}}
+          }}]
+        }
+        """#.utf8)
+        let request = try JSONDecoder().decode(OpenAIChatRequest.self, from: data)
+        let validated = try OpenAIRequestValidator.validate(request, modelID: "m")
+        #expect(validated.tools.count == 1)
+        #expect(validated.includeUsage)
+    }
+
+    private func fixture(_ name: String) throws -> OpenAIChatRequest {
+        let url = try #require(Bundle.module.url(
+            forResource: name, withExtension: nil, subdirectory: "Fixtures"))
+        return try JSONDecoder().decode(OpenAIChatRequest.self, from: Data(contentsOf: url))
+    }
+}
+
+@Suite("Gemma tool calls")
+struct GemmaToolCallTests {
+    @Test func parsesNestedArgumentsAndGemmaQuotes() throws {
+        let parsed = try GemmaToolCallParser().parse(
+            #"call:read{path:<|"|>/tmp/ü"<|"|>,options:{lines:[1,2],exact:true}}"#,
+            allowedTools: ["read"],
+            id: "call_0123456789abcdef01234567")
+        #expect(parsed.name == "read")
+        #expect(parsed.argumentsJSON.contains(#""path":"/tmp/ü\"""#))
+        #expect(parsed.argumentsJSON.contains(#""exact":true"#))
+    }
+
+    @Test func unknownToolFailsClosed() {
+        #expect(throws: GemmaToolCallParserError.unknownTool("write")) {
+            try GemmaToolCallParser().parse(
+                "call:write{path:<|\"|>/tmp/x<|\"|>}",
+                allowedTools: ["read"],
+                id: "call_0123456789abcdef01234567")
+        }
+    }
+
+    @Test func parsesJSONUnicodeEscapesAndSurrogatePairs() throws {
+        let parsed = try GemmaToolCallParser().parse(
+            #"call:read{path:"\u00fc-\ud83c\udf33",note:"a\b\f"}"#,
+            allowedTools: ["read"],
+            id: "call_0123456789abcdef01234567")
+        #expect(parsed.argumentsJSON.contains(#""path":"ü-🌳""#))
+        #expect(parsed.argumentsJSON.contains(#""note":"a\b\f""#))
+    }
+
+    @Test func suppressesThoughtBlockAndExposesTextAfterChannelClose() async throws {
+        let tokenizer = try await GFTokenizer.load()
+        let decoder = StructuredAssistantDecoder(tokenizer: tokenizer, allowedTools: [])
+        #expect(try decoder.consume(tokenID: tokenizer.channelStartID, delta: "").isEmpty)
+        #expect(try decoder.consume(tokenID: tokenizer.bosID, delta: "thought").isEmpty)
+        #expect(try decoder.consume(tokenID: tokenizer.bosID, delta: "\n").isEmpty)
+        #expect(try decoder.consume(tokenID: tokenizer.bosID, delta: "private").isEmpty)
+        #expect(try decoder.consume(tokenID: tokenizer.channelEndID, delta: "").isEmpty)
+        #expect(try decoder.consume(tokenID: tokenizer.bosID, delta: "visible") == [
+            .content("visible"),
+        ])
+    }
+
+    @Test func routesControlTokenDeltaThroughCurrentChannel() async throws {
+        // A non-empty delta on a control token is text the detokenizer held
+        // back from before that token; it belongs to the channel in effect
+        // now and must not vanish with the control token's early return.
+        let tokenizer = try await GFTokenizer.load()
+        let decoder = StructuredAssistantDecoder(tokenizer: tokenizer, allowedTools: [])
+        #expect(try decoder.consume(tokenID: tokenizer.channelStartID, delta: "leftover") == [
+            .content("leftover"),
+        ])
+        // The channel switch still happened: this resolves the label.
+        #expect(try decoder.consume(tokenID: tokenizer.bosID, delta: "thought\n").isEmpty)
+        // In the thought channel the routed delta is correctly dropped.
+        #expect(try decoder.consume(tokenID: tokenizer.channelEndID, delta: "hidden").isEmpty)
+        #expect(try decoder.consume(tokenID: tokenizer.bosID, delta: "ok") == [.content("ok")])
+    }
+
+    @Test func tailDuringThoughtChannelIsSuppressed() async throws {
+        let tokenizer = try await GFTokenizer.load()
+        let decoder = StructuredAssistantDecoder(tokenizer: tokenizer, allowedTools: [])
+        #expect(try decoder.consume(tokenID: tokenizer.channelStartID, delta: "").isEmpty)
+        #expect(try decoder.consume(tokenID: tokenizer.bosID, delta: "thought\n").isEmpty)
+        #expect(try decoder.consumeTail("secret").isEmpty)
+        #expect(try decoder.consume(tokenID: tokenizer.channelEndID, delta: "").isEmpty)
+        #expect(try decoder.consumeTail("ok") == [.content("ok")])
+    }
+
+    @Test func tailDuringUnresolvedLabelEmitsNothing() async throws {
+        // Generation ended before the channel label line completed; the text
+        // cannot be attributed, so nothing may surface.
+        let tokenizer = try await GFTokenizer.load()
+        let decoder = StructuredAssistantDecoder(tokenizer: tokenizer, allowedTools: [])
+        #expect(try decoder.consume(tokenID: tokenizer.channelStartID, delta: "").isEmpty)
+        #expect(try decoder.consumeTail("final-but-no-newline").isEmpty)
+    }
+
+    @Test func heldBytesBeforeChannelMarkerStayInTheirChannel() async throws {
+        // Thought text ending in a byte-fallback character right before
+        // <channel|> must not leak into the visible answer. The barrier
+        // detokenizer commits the held character as the marker's delta, and
+        // consume routes it under the still-thought channel.
+        let tokenizer = try await GFTokenizer.load()
+        var detok = GFDetokenizer(tokenizer: tokenizer,
+                                  barrierTokenIDs: tokenizer.structuralMarkerIDs)
+        let decoder = StructuredAssistantDecoder(tokenizer: tokenizer, allowedTools: [])
+        var events: [StructuredAssistantEvent] = []
+        func feed(_ id: Int32) throws {
+            events += try decoder.consume(tokenID: id, delta: detok.push(id))
+        }
+
+        try feed(tokenizer.channelStartID)
+        for id in tokenizer.encode("thought\n", addBOS: false) { try feed(id) }
+        for token in ["<0xF0>", "<0x9F>", "<0x98>", "<0x80>"] {
+            try feed(GFTokenizer.requireTokenID(tokenizer.tokenizer, token))
+        }
+        try feed(tokenizer.channelEndID)
+        for id in tokenizer.encode("ok", addBOS: false) { try feed(id) }
+        events += try decoder.consumeTail(detok.flush())
+
+        let visible = events.compactMap { event -> String? in
+            if case .content(let text) = event { return text }
+            return nil
+        }.joined()
+        #expect(visible == "ok", "thought-channel bytes leaked: '\(visible)'")
+    }
+
+    @Test func tailAfterFailureThrows() async throws {
+        let tokenizer = try await GFTokenizer.load()
+        let decoder = StructuredAssistantDecoder(tokenizer: tokenizer, allowedTools: [])
+        #expect(throws: GemmaToolCallParserError.self) {
+            try decoder.consume(tokenID: tokenizer.toolCallEndID, delta: "")
+        }
+        #expect(throws: GemmaToolCallParserError.self) {
+            try decoder.consumeTail("x")
+        }
+    }
+}
+
+@Suite("Streaming stop matcher")
+struct StreamingStopMatcherTests {
+    @Test func withholdsCrossChunkStop() {
+        var matcher = StreamingStopMatcher(stops: ["END"])
+        #expect(matcher.push("hello E") == "hello ")
+        #expect(matcher.push("N") == "")
+        #expect(matcher.push("D ignored") == "")
+        #expect(matcher.isStopped)
+    }
+
+    @Test func flushesUnicodeTail() {
+        var matcher = StreamingStopMatcher(stops: ["🌳stop"])
+        #expect(matcher.push("hello 🌳") == "hello ")
+        #expect(matcher.finish() == "🌳")
+    }
+}
+
+@Suite("Server arguments")
+struct ServerArgumentTests {
+
+    @Test(arguments: [24, 32])
+    func cacheGrowthRejects128KOnEightGBUnlessExplicitlyOverridden(slots: Int) throws {
+        let input = ["--model", "unused.gturbo", "--max-context", "131072",
+                     "--expert-cache-slots", String(slots)]
+        #expect(throws: ServerArgumentError.self) {
+            _ = try ServerArguments.parse(input, hostMemoryBytes: 8 << 30, environment: [:])
+        }
+        let overridden = try ServerArguments.parse(input, hostMemoryBytes: 8 << 30,
+            environment: [ServerArguments.unbackedContextOverrideVariable: "1"])
+        #expect(overridden.expertCacheSlots == slots)
+        #expect(try ServerArguments.parse(input, hostMemoryBytes: 16 << 30,
+                                         environment: [:]).maxContext == 131_072)
+    }
+
+    @Test func defaults() throws {
+        let arguments = try ServerArguments.parse(["--model", "model.gturbo"])
+        #expect(arguments.port == 8080)
+        #expect(arguments.maxContext == 16_384)
+        #expect(arguments.queueLimit == 4)
+        #expect(arguments.promptCacheMode == .singlePrefix)
+        #expect(arguments.expertCacheSlots == 16)
+        #expect(arguments.expertCachePolicy == .lfu)
+        #expect(arguments.prefillPolicy == .chunked)
+        #expect(arguments.prefillChunkTokens == 128)
+        #expect(arguments.rdadvisePolicy == .off)
+    }
+
+    /// The server rejected `--prefill-chunk-tokens auto` while the CLI accepted
+    /// it and `RUNTIME_CONTROLS.md` promised both took the same values, so this
+    /// throws on the pre-fix parser. On the server the word is an alias for the
+    /// cap and nothing past the parser can tell the two spellings apart: a
+    /// per-request size is the smallest allowed size covering the span, so the
+    /// cap prefills every prompt in those same spans, and the KV ring is sized
+    /// from the cap either way. Only the prefill scratch is sized from the
+    /// chunk, and sizing it per request means reallocating it whenever the
+    /// chosen size moves.
+    @Test func parsesAutoPrefillChunkTokens() throws {
+        let arguments = try ServerArguments.parse([
+            "--model", "model.gturbo",
+            "--prefill-chunk-tokens", "auto",
+        ])
+        #expect(arguments.prefillChunkTokens == PrefillRuntimeConfig.maxChunkTokens)
+
+        // Indistinguishable from the explicit cap, which is the whole claim:
+        // the runtime identity is taken from the configuration, so a prefix
+        // built under `auto` is reusable by a run started at 256.
+        let explicitCap = try ServerArguments.parse([
+            "--model", "model.gturbo",
+            "--prefill-chunk-tokens", "256",
+        ])
+        #expect(try arguments.resolvedRuntimeConfiguration()
+                == (try explicitCap.resolvedRuntimeConfiguration()))
+
+        // Last flag wins in both directions, as in the CLI: a later integer is
+        // a fixed size rather than an integer layered on a mode still on, and a
+        // later `auto` replaces the integer rather than being ignored because
+        // one was already set.
+        let integerLast = try ServerArguments.parse([
+            "--model", "model.gturbo",
+            "--prefill-chunk-tokens", "auto",
+            "--prefill-chunk-tokens", "64",
+        ])
+        #expect(integerLast.prefillChunkTokens == 64)
+
+        let autoLast = try ServerArguments.parse([
+            "--model", "model.gturbo",
+            "--prefill-chunk-tokens", "64",
+            "--prefill-chunk-tokens", "auto",
+        ])
+        #expect(autoLast.prefillChunkTokens == PrefillRuntimeConfig.maxChunkTokens)
+    }
+
+    /// `auto` reaches the resolve guard as the cap, so the guard that tests
+    /// membership of `allowedPrefillChunkTokens` never sees the word and never
+    /// has to learn it.
+    @Test func autoSurvivesTheResolveGuard() throws {
+        let arguments = try ServerArguments.parse([
+            "--model", "model.gturbo",
+            "--prefill-chunk-tokens", "auto",
+        ])
+        let configuration = try arguments.resolvedRuntimeConfiguration()
+        #expect(configuration.prefillPolicy == .chunked)
+        #expect(configuration.prefillConfig.chunkTokens
+                == PrefillRuntimeConfig.maxChunkTokens)
+    }
+
+    @Test func parsesSinglePrefixModeAndRejectsUnknownMode() throws {
+        let arguments = try ServerArguments.parse([
+            "--model", "model.gturbo",
+            "--prompt-cache-mode", "single-prefix",
+        ])
+        #expect(arguments.promptCacheMode == .singlePrefix)
+        let rollback = try ServerArguments.parse([
+            "--model", "model.gturbo",
+            "--prompt-cache-mode", "off",
+        ])
+        #expect(rollback.promptCacheMode == .off)
+        #expect(throws: ServerArgumentError.self) {
+            try ServerArguments.parse([
+                "--model", "model.gturbo",
+                "--prompt-cache-mode", "many",
+            ])
+        }
+    }
+
+    @Test func runtimeFlagsReachTheResolvedConfiguration() throws {
+        let arguments = try ServerArguments.parse([
+            "--model", "model.gturbo",
+            "--expert-cache-slots", "24",
+            "--expert-cache-policy", "lru",
+            "--prefill", "on",
+            "--prefill-chunk-tokens", "64",
+            "--rdadvise", "adaptive",
+        ])
+        #expect(arguments.expertCacheSlots == 24)
+        #expect(arguments.expertCachePolicy == .lru)
+        #expect(arguments.prefillPolicy == .chunked)
+        #expect(arguments.prefillChunkTokens == 64)
+        #expect(arguments.rdadvisePolicy == .adaptive)
+
+        let configuration = try arguments.resolvedRuntimeConfiguration()
+        #expect(configuration.expertCacheSlots == 24)
+        #expect(configuration.expertCachePolicy == .lru)
+        #expect(configuration.prefillPolicy == .chunked)
+        #expect(configuration.prefillChunkTokens == 64)
+        #expect(configuration.rdadvisePolicy == .adaptive)
+    }
+
+    @Test func prefillOffIsResolvableBelowTheChunkedPrefillSlotFloor() throws {
+        let arguments = try ServerArguments.parse([
+            "--model", "model.gturbo",
+            "--expert-cache-slots", "8",
+            "--prefill", "off",
+        ])
+        let configuration = try arguments.resolvedRuntimeConfiguration()
+        #expect(configuration.expertCacheSlots == 8)
+        #expect(configuration.prefillPolicy == .off)
+    }
+
+    @Test func chunkedPrefillBelowTheSlotFloorIsRejected() throws {
+        let arguments = try ServerArguments.parse([
+            "--model", "model.gturbo",
+            "--expert-cache-slots", "8",
+            "--prefill", "on",
+        ])
+        #expect(throws: ServerArgumentError.self) {
+            try arguments.resolvedRuntimeConfiguration()
+        }
+    }
+
+    @Test(arguments: [
+        ["--expert-cache-slots", "12"],
+        ["--expert-cache-policy", "mru"],
+        ["--prefill", "maybe"],
+        ["--prefill-chunk-tokens", "512"],
+        ["--prefill-chunk-tokens", "automatic"],
+        ["--rdadvise", "eager"],
+    ])
+    func rejectsUnsupportedRuntimeValues(flag: [String]) throws {
+        #expect(throws: ServerArgumentError.self) {
+            try ServerArguments.parse(["--model", "model.gturbo"] + flag)
+        }
+    }
+
+    /// A host large enough to back every rung, so these cases test the
+    /// allowlist rather than the machine the suite happens to run on.
+    private static let sixteenGigabyteHost: UInt64 = 17_179_869_184
+    private static let eightGigabyteHost: UInt64 = 8_589_934_592
+
+    @Test(arguments: ServerArguments.allowedMaxContext)
+    func everyAllowedContextParses(_ maxContext: Int) throws {
+        let arguments = try ServerArguments.parse(
+            ["--model", "model.gturbo", "--max-context", String(maxContext)],
+            hostMemoryBytes: Self.sixteenGigabyteHost,
+            environment: [:])
+        #expect(arguments.maxContext == maxContext)
+    }
+
+    /// The allowlist is the last thing between a request and the KV allocator,
+    /// so a rung above what the checkpoint's positions can address must not be
+    /// reachable through it — a 262,145-token context has no RoPE position.
+    @Test func everyAllowedContextFitsTheCheckpointCeiling() {
+        let ceiling = ArchConfig.gemma4_26B_A4B.maxPositionEmbeddings
+        #expect(ServerArguments.allowedMaxContext.allSatisfy { $0 <= ceiling })
+        #expect(ServerArguments.allowedMaxContext.max() == ceiling)
+        #expect(ServerArguments.allowedMaxContext == ServerArguments.allowedMaxContext.sorted())
+        // The help text is the only place an operator reads the list, so it
+        // must not drift from the list the parser enforces.
+        for context in ServerArguments.allowedMaxContext {
+            #expect(ServerArguments.usage.contains(String(context)), "context \(context)")
+        }
+    }
+
+    @Test(arguments: [262_145, 100_000])
+    func rejectsAContextOutsideTheAllowlist(_ maxContext: Int) throws {
+        #expect(throws: ServerArgumentError.self) {
+            try ServerArguments.parse(
+                ["--model", "model.gturbo", "--max-context", String(maxContext)],
+                hostMemoryBytes: Self.sixteenGigabyteHost,
+                environment: [:])
+        }
+    }
+
+    /// Refused at argument parsing, before the model starts loading: a 256K KV
+    /// on an 8 GB Mac would otherwise fail inside the allocator with an error
+    /// that names neither the context nor the memory it needed.
+    @Test func aContextTheHostCannotBackIsRefusedWithItsMemoryNeed() throws {
+        #expect(throws: ServerArgumentError.self) {
+            try ServerArguments.parse(
+                ["--model", "model.gturbo", "--max-context", "262144"],
+                hostMemoryBytes: Self.eightGigabyteHost,
+                environment: [:])
+        }
+        do {
+            _ = try ServerArguments.parse(
+                ["--model", "model.gturbo", "--max-context", "262144"],
+                hostMemoryBytes: Self.eightGigabyteHost,
+                environment: [:])
+            Issue.record("a 256K context was admitted on an 8 GB host")
+        } catch let error as ServerArgumentError {
+            #expect(error.description.contains("262,144"))
+            #expect(error.description.contains("needs 16 GB"))
+            #expect(error.description.contains("this Mac has 8 GB"))
+            #expect(error.description.contains("TURBO_FIELDFARE_ALLOW_UNBACKED_CONTEXT=1"))
+        }
+    }
+
+    @Test func theSameContextIsAdmittedOnAHostThatBacksIt() throws {
+        let arguments = try ServerArguments.parse(
+            ["--model", "model.gturbo", "--max-context", "262144"],
+            hostMemoryBytes: Self.sixteenGigabyteHost,
+            environment: [:])
+        #expect(arguments.maxContext == 262_144)
+    }
+
+    /// The override exists for measurement runs that deliberately exceed the
+    /// rule to record what actually happens; it must admit the exact context
+    /// the rule refused, not relax the rule generally.
+    @Test func theOverrideAdmitsAnUnbackedContext() throws {
+        let arguments = try ServerArguments.parse(
+            ["--model", "model.gturbo", "--max-context", "262144"],
+            hostMemoryBytes: Self.eightGigabyteHost,
+            environment: ["TURBO_FIELDFARE_ALLOW_UNBACKED_CONTEXT": "1"])
+        #expect(arguments.maxContext == 262_144)
+    }
+
+    /// 128K projects to 2.75 GiB of KV plus the 2 GiB non-KV runtime plus the
+    /// 3 GiB host reserve: 8,320,122,880 bytes, which an 8 GB Mac clears by
+    /// 269,811,712. Whether that margin survives a real decode is what step 9
+    /// of the plan measures; the rule as written admits it, so this case pins
+    /// the arithmetic rather than the outcome of that measurement.
+    @Test func oneTwentyEightKIsAdmittedOnAnEightGigabyteHost() throws {
+        let arguments = try ServerArguments.parse(
+            ["--model", "model.gturbo", "--max-context", "131072"],
+            hostMemoryBytes: Self.eightGigabyteHost,
+            environment: [:])
+        #expect(arguments.maxContext == 131_072)
+    }
+
+    /// Admission must not move the default: the server still starts at 16,384
+    /// on a host that cannot back the new rungs.
+    @Test func theDefaultContextIsUnchangedAndAdmittedEverywhere() throws {
+        let arguments = try ServerArguments.parse(
+            ["--model", "model.gturbo"],
+            hostMemoryBytes: Self.eightGigabyteHost,
+            environment: [:])
+        #expect(arguments.maxContext == 16_384)
+        #expect(arguments.maxContext == 16_384)
+    }
+
+    /// The integers a message names, in order. Comparing these against the
+    /// array the guard tests catches a message that omits a legal value and one
+    /// that names an illegal extra, and cannot be fooled the way a
+    /// `contains("256")` substring check is by "2560".
+    private func integers(in text: String) -> [Int] {
+        text.split { !$0.isNumber }.compactMap { Int($0) }
+    }
+
+    @Test func allowedValueListRendersChoices() {
+        #expect(RuntimeConfiguration.allowedValueList([8]) == "8")
+        #expect(RuntimeConfiguration.allowedValueList([8, 16]) == "8 or 16")
+        #expect(RuntimeConfiguration.allowedValueList([8, 16, 24, 32])
+                == "8, 16, 24, or 32")
+        #expect(RuntimeConfiguration.allowedValueList([]) == "")
+    }
+
+    /// Public 0.5.0 through 0.7.1 printed "--prefill-chunk-tokens must be 32,
+    /// 64, or 128" from a hardcoded string while the guard beside it already
+    /// accepted 256, so the rejection named a legal value as illegal. The
+    /// assertion is on the integer set rather than on the sentence, because the
+    /// invariant is that the message and the guard read the same array.
+    @Test(arguments: [
+        (flag: "--expert-cache-slots",
+         allowed: RuntimeConfiguration.allowedExpertCacheSlots,
+         badValue: "12",
+         namesAuto: false),
+        (flag: "--expert-cache-slots",
+         allowed: RuntimeConfiguration.allowedExpertCacheSlots,
+         badValue: "many",
+         namesAuto: false),
+        (flag: "--prefill-chunk-tokens",
+         allowed: RuntimeConfiguration.allowedPrefillChunkTokens,
+         badValue: "512",
+         namesAuto: true),
+        (flag: "--prefill-chunk-tokens",
+         allowed: RuntimeConfiguration.allowedPrefillChunkTokens,
+         badValue: "many",
+         namesAuto: true),
+    ])
+    func parseRejectionNamesExactlyTheAllowedValues(
+        testCase: (flag: String, allowed: [Int], badValue: String, namesAuto: Bool)
+    ) {
+        do {
+            _ = try ServerArguments.parse([
+                "--model", "model.gturbo", testCase.flag, testCase.badValue,
+            ])
+            Issue.record("\(testCase.flag) \(testCase.badValue) parsed")
+        } catch let error as ServerArgumentError {
+            let named = integers(in: error.description)
+            #expect(error.description.hasPrefix(testCase.flag),
+                    "the rejection does not lead with \(testCase.flag): \(error)")
+            #expect(named == testCase.allowed,
+                    "\(testCase.flag) rejection names \(named), guard accepts \(testCase.allowed)")
+            // The word is not in the integer array, so nothing above would
+            // notice a rejection that kept calling `auto` illegal - which is
+            // exactly what the pre-fix parser printed.
+            #expect(error.description.contains("auto") == testCase.namesAuto,
+                    "\(testCase.flag) rejection: \(error)")
+        } catch {
+            Issue.record("unexpected error for \(testCase.flag): \(error)")
+        }
+    }
+
+    @Test func resolveRejectionNamesExactlyTheAllowedValues() {
+        let cases: [(flag: String,
+                     arguments: ServerArguments,
+                     allowed: [Int],
+                     namesAuto: Bool)] = [
+            (flag: "--expert-cache-slots",
+             arguments: ServerArguments(model: "model.gturbo",
+                                        port: 8080,
+                                        modelID: "gemma-4-26b-a4b-it",
+                                        maxContext: 16_384,
+                                        queueLimit: 4,
+                                        promptCacheMode: .singlePrefix,
+                                        expertCacheSlots: 12,
+                                        expertCachePolicy: .lfu,
+                                        prefillPolicy: .off,
+                                        prefillChunkTokens: 128,
+                                        rdadvisePolicy: .off,
+                                        visionPack: nil,
+                                        visionResidency: .onDemand),
+             allowed: RuntimeConfiguration.allowedExpertCacheSlots,
+             namesAuto: false),
+            (flag: "--prefill-chunk-tokens",
+             arguments: ServerArguments(model: "model.gturbo",
+                                        port: 8080,
+                                        modelID: "gemma-4-26b-a4b-it",
+                                        maxContext: 16_384,
+                                        queueLimit: 4,
+                                        promptCacheMode: .singlePrefix,
+                                        expertCacheSlots: 16,
+                                        expertCachePolicy: .lfu,
+                                        prefillPolicy: .off,
+                                        prefillChunkTokens: 512,
+                                        rdadvisePolicy: .off,
+                                        visionPack: nil,
+                                        visionResidency: .onDemand),
+             allowed: RuntimeConfiguration.allowedPrefillChunkTokens,
+             namesAuto: true),
+        ]
+        for testCase in cases {
+            do {
+                _ = try testCase.arguments.resolvedRuntimeConfiguration()
+                Issue.record("\(testCase.flag) resolved an unsupported value")
+            } catch let error as ServerArgumentError {
+                let named = integers(in: error.description)
+                #expect(error.description.hasPrefix(testCase.flag),
+                        "the rejection does not lead with \(testCase.flag): \(error)")
+                #expect(named == testCase.allowed,
+                        "\(testCase.flag) rejection names \(named), guard accepts \(testCase.allowed)")
+                // One sentence for both doors: a flag rejected here must offer
+                // the same values it offers when `parse` rejects it.
+                #expect(error.description.contains("auto") == testCase.namesAuto,
+                        "\(testCase.flag) rejection: \(error)")
+            } catch {
+                Issue.record("unexpected error for \(testCase.flag): \(error)")
+            }
+        }
+    }
+
+    @Test func usageNamesExactlyTheAllowedValues() throws {
+        let lines = ServerArguments.usage.split(separator: "\n", omittingEmptySubsequences: false)
+        let slotsLine = try #require(lines.first { $0.contains("--expert-cache-slots") })
+        let namedSlots = integers(in: String(slotsLine))
+        let defaultSlots = try ServerArguments.parse(["--model", "model.gturbo"]).expertCacheSlots
+        #expect(namedSlots == RuntimeConfiguration.allowedExpertCacheSlots + [defaultSlots],
+                "the --expert-cache-slots help line names \(namedSlots)")
+        #expect(!slotsLine.contains("auto"),
+                "the --expert-cache-slots help line offers auto: \(slotsLine)")
+        let flagLine = try #require(lines.first { $0.contains("--prefill-chunk-tokens") })
+        #expect(flagLine.contains("<n|auto>"),
+                "the --prefill-chunk-tokens placeholder does not admit auto: \(flagLine)")
+        let chunkLine = try #require(lines.first { $0.contains("Prefill chunk size:") })
+        let namedChunks = integers(in: String(chunkLine))
+        #expect(namedChunks == RuntimeConfiguration.allowedPrefillChunkTokens,
+                "the --prefill-chunk-tokens help line names \(namedChunks)")
+        #expect(chunkLine.contains("auto"),
+                "the --prefill-chunk-tokens help line omits auto: \(chunkLine)")
+    }
+
+    @Test func imageDataURLPreservesOrderedMultimodalParts() throws {
+        let dataURL = "data:image/png;base64,iVBORw0KGgo="
+        let data = Data(#"""
+        {"model":"m","messages":[{"role":"user","content":[
+          {"type":"text","text":"before"},
+          {"type":"image_url","image_url":{"url":"\#(dataURL)","detail":"auto"}},
+          {"type":"text","text":"after"}
+        ]}]}
+        """#.utf8)
+        let request = try JSONDecoder().decode(OpenAIChatRequest.self, from: data)
+        let validated = try OpenAIRequestValidator.validate(request, modelID: "m")
+        let message = try #require(validated.multimodalMessages?.first)
+        #expect(message.content.count == 3)
+        #expect(validated.imageFiles.count == 1)
+        guard case .text("before") = message.content[0],
+              case .image = message.content[1],
+              case .text("after") = message.content[2] else {
+            Issue.record("content part order changed")
+            return
+        }
+    }
+
+    @Test func imageIdentitiesAlignWithMessagesAndPreserveOrder() throws {
+        let a = "data:image/png;base64,iVBORw0KGgo="
+        let b = "data:image/png;base64,iVBORw0KGgoAAAA="
+        let json = #"""
+        {"model":"m","messages":[
+          {"role":"user","content":[
+            {"type":"image_url","image_url":{"url":"\#(a)"}},
+            {"type":"image_url","image_url":{"url":"\#(b)"}},
+            {"type":"text","text":"compare"}]},
+          {"role":"assistant","content":"ok"},
+          {"role":"user","content":"and now"}
+        ]}
+        """#
+        let request = try JSONDecoder().decode(
+            OpenAIChatRequest.self, from: Data(json.utf8))
+        let validated = try OpenAIRequestValidator.validate(request, modelID: "m")
+        #expect(validated.imageIdentities.count == validated.messages.count)
+        #expect(validated.imageIdentities[0].count == 2)
+        #expect(validated.imageIdentities[1].isEmpty)
+        #expect(validated.imageIdentities[2].isEmpty)
+        #expect(validated.imageIdentities[0][0] != validated.imageIdentities[0][1])
+
+        // The same bytes must hash the same across separate requests, which is
+        // what lets a later turn recognise an earlier image.
+        let again = try OpenAIRequestValidator.validate(
+            try JSONDecoder().decode(OpenAIChatRequest.self, from: Data(json.utf8)),
+            modelID: "m")
+        #expect(again.imageIdentities == validated.imageIdentities)
+        #expect(again.imageFiles.keys.sorted(by: { $0.uuidString < $1.uuidString })
+                != validated.imageFiles.keys.sorted(by: { $0.uuidString < $1.uuidString }))
+    }
+
+    @Test func imageValidationRejectsUnsupportedRoleDetailAndScheme() throws {
+        for content in [
+            #"{"role":"assistant","content":[{"type":"image_url","image_url":{"url":"data:image/png;base64,iVBORw0KGgo="}}]}"#,
+            #"{"role":"user","content":[{"type":"image_url","image_url":{"url":"data:image/png;base64,iVBORw0KGgo=","detail":"high"}}]}"#,
+            #"{"role":"user","content":[{"type":"image_url","image_url":{"url":"https://example.com/image.png"}}]}"#,
+        ] {
+            let data = Data("{\"model\":\"m\",\"messages\":[\(content)]}".utf8)
+            let request = try JSONDecoder().decode(OpenAIChatRequest.self, from: data)
+            #expect(throws: ServerRequestError.self) {
+                try OpenAIRequestValidator.validate(request, modelID: "m")
+            }
+        }
+    }
+
+    @Test func manyImagesValidateAndKeepPositionalIdentity() throws {
+        func conversation(imagesPerTurn: Int, turns: Int) throws -> OpenAIChatRequest {
+            var messages: [String] = []
+            var seed = 0
+            for turn in 0..<turns {
+                var parts: [String] = []
+                for _ in 0..<imagesPerTurn {
+                    seed += 1
+                    let payload = String(repeating: "A", count: 4 * seed)
+                    parts.append(
+                        #"{"type":"image_url","image_url":{"url":"data:image/png;base64,\#(payload)"}}"#)
+                }
+                parts.append(#"{"type":"text","text":"turn \#(turn)"}"#)
+                messages.append("{\"role\":\"user\",\"content\":[\(parts.joined(separator: ","))]}")
+                messages.append("{\"role\":\"assistant\",\"content\":\"ok \(turn)\"}")
+            }
+            messages.removeLast()
+            let json = "{\"model\":\"m\",\"messages\":[\(messages.joined(separator: ","))]}"
+            return try JSONDecoder().decode(
+                OpenAIChatRequest.self, from: Data(json.utf8))
+        }
+
+        // Ten images across ten turns, each identified positionally.
+        let spread = try OpenAIRequestValidator.validate(
+            conversation(imagesPerTurn: 1, turns: 10), modelID: "m")
+        #expect(spread.imageFiles.count == 10)
+        #expect(spread.imageIdentities.count == spread.messages.count)
+        #expect(spread.imageIdentities.filter { !$0.isEmpty }.count == 10)
+
+        // And many in a single message.
+        let dense = try OpenAIRequestValidator.validate(
+            conversation(imagesPerTurn: 8, turns: 1), modelID: "m")
+        #expect(dense.imageFiles.count == 8)
+        #expect(dense.imageIdentities[0].count == 8)
+        #expect(Set(dense.imageIdentities[0]).count == 8)
+    }
+
+}
