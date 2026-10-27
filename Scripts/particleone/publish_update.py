@@ -3,6 +3,7 @@
 import argparse,hashlib,json,os,plistlib,re,shutil,subprocess,sys,tempfile,time,urllib.request,xml.etree.ElementTree as ET
 from pathlib import Path
 from urllib.parse import urlparse
+from cleanup_releases import prune_archives,archive_folders
 ROOT=Path(__file__).resolve().parents[2]
 NS='http://www.andymatuschak.org/xml-namespaces/sparkle'
 ET.register_namespace('sparkle',NS)
@@ -76,6 +77,7 @@ def main():
             time.sleep(0.2)
         else:raise SystemExit('Signed release saved, but local update host is unavailable or serving another feed. Check the host log; no unrelated process was stopped.')
     refresh_local_metadata(release,target)
+    prune_archives(archive_folders(ROOT,Path.home()),release['version'],release['build'])
     print('Published Particle '+release['version']+' ('+release['build']+') to '+release['update_feed'])
     print('Existing updater-enabled installations will find it at their next check.')
 if __name__=='__main__':main()

@@ -3,6 +3,7 @@
 from pathlib import Path
 import datetime,hashlib,json,os,plistlib,shutil,sqlite3,subprocess,tempfile
 ROOT=Path(__file__).resolve().parents[2]
+from cleanup_releases import cleanup
 IDENTITY='app.particleone.desktop'
 
 def info(app):return plistlib.loads((app/'Contents/Info.plist').read_bytes())
@@ -62,6 +63,8 @@ def main():
     assert (model/'manifest.json').read_bytes()==model_manifest
     if legacy.exists():shutil.rmtree(legacy)
     if backup.exists():shutil.rmtree(backup)
-    report={'app':str(target),'version':value['CFBundleShortVersionString'],'build':value['CFBundleVersion'],'model':str(model),'updated_workspaces':changed,'same_bundle_identifier':True,'same_update_key':True,'weights_copied':0,'user_transcripts_and_memories_preserved':True}
+    retention=cleanup(ROOT,release['version'],release['build'])
+    if retention['active_older_copies']:raise RuntimeError('Close older Particle copies and run cleanup_releases.py; no active app was removed.')
+    report={'older_release_cleanup':retention,'app':str(target),'version':value['CFBundleShortVersionString'],'build':value['CFBundleVersion'],'model':str(model),'updated_workspaces':changed,'same_bundle_identifier':True,'same_update_key':True,'weights_copied':0,'user_transcripts_and_memories_preserved':True}
     (ROOT/('docs/particleone/validation-'+release['version'])/'installation.json').write_text(json.dumps(report,indent=2)+'\n');print(json.dumps(report,indent=2))
 if __name__=='__main__':main()

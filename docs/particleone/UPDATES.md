@@ -15,7 +15,7 @@ cd /Users/lakshyaprajapati/Repositories/Particle
 Scripts/release_particleone.sh
 ```
 
-This compiles and packages into a reusable internal staging directory, assigns an increasing UTC timestamp build number, verifies the archive and code signature, signs both archive and appcast, and publishes the feed. No version-named app folder needs to be opened. Use `--version 0.3.1` to change the display version; build numbers still increase automatically. Keep the previous release archives available for existing downloads.
+This compiles and packages into a reusable internal staging directory, assigns an increasing UTC timestamp build number, verifies the archive and code signature, signs both archive and appcast, and publishes the feed. No version-named app folder needs to be opened. Use `--version 0.3.1` to change the display version; build numbers still increase automatically. The user requires current-version-only retention. After successful publication, older distribution archives are deleted. After verified installation, older app builds and cached copies are deleted too. An older download in progress may need to restart against the current feed. Models and user data remain separate.
 
 The development feed is `http://127.0.0.1:49271/appcast.xml`. A per-user LaunchAgent named `app.particleone.update-host` serves only the signed feed and app archives, bound exclusively to loopback. Directory listings, symlinks and other files are rejected. Host and release files live under `~/Library/Application Support/ParticleOneUpdates`, separate from workspace data. The local app polls once per minute; a build reaches an open updater-enabled copy on its next check. Settings also permits an immediate check. Failed offline checks retain the installed app.
 
@@ -30,3 +30,14 @@ No public app archive/feed has been published. Supply an HTTPS `--update-feed` a
 References: [Sparkle setup](https://sparkle-project.org/documentation/), [publishing](https://sparkle-project.org/documentation/publishing/), [customization](https://sparkle-project.org/documentation/customization/).
 
 From 0.3.0 the product/bundle is Particle.app and archives use the Particle- prefix. Existing bundle identity, update key, localhost feed and compatibility cask token remain unchanged. The server accepts both old and new archive names.
+
+
+## Mandatory release cleanup
+
+Every new release keeps only its current version/build. The publisher removes older Particle/ParticleOne ZIPs from staging, the local feed and Homebrew downloads. The local installer verifies the new app before removing older app/cache copies. For a Sparkle-installed update, finish the release with:
+
+```sh
+python3 Scripts/particleone/cleanup_releases.py
+```
+
+The cleanup verifies the current installed bundle and matches only Particle app identities and archive names in known distribution/cache folders. A running older copy is reported for normal closure rather than deleted while active. Preserve source history, test evidence, models and private workspace data.
