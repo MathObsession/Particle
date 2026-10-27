@@ -1,3 +1,6 @@
+<img width="414" height="192" alt="green-reference" src="https://github.com/user-attachments/assets/d7a3b62c-2b8f-4c89-82a2-c3951f5d9e7b" />
+
+
 # Particle
 
 Particle is a native, local AI workspace for Apple Silicon Macs, created by Lakshya Prajapati. **Churo Chat** handles conversations; **Particle Code**, powered by **Churo Code**, reads and edits projects, runs approved commands, and searches public documentation.
