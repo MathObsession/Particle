@@ -15,6 +15,21 @@ The SwiftUI app uses a green, grain-textured ParticleDesign interface with PT Se
 
 The underlying engine is a TurboFieldfare fork adapted to the Sarvam 30B base model, with Swift/Metal inference and bounded MoE expert streaming from GGUF or native `.particle` packs. Churo names describe the assistant experience, not newly trained weights. Original licenses and technical attribution are retained. This source repository contains no model weights, credentials, chats, or build archives.
 
+## Install the tester app (no Xcode)
+
+On an Apple Silicon Mac running macOS 26 or newer, paste into Terminal:
+
+```bash
+curl -fsSL https://github.com/MathObsession/Particle/releases/latest/download/install.sh | /bin/bash
+```
+
+The installer downloads and verifies the prebuilt app, installs it in
+`~/Applications/Particle.app`, and opens it. The app downloads the approximately
+19.6 GB Churo model on first launch; allow 22 GB free for the model plus app space.
+This tester build is not Apple-notarized: if macOS blocks opening, use
+System Settings → Privacy & Security → Open Anyway. The installer keeps macOS
+security checks enabled. [Installation details and limits](docs/particleone/TESTER_INSTALL.md).
+
 ## Build and run
 
 ```sh
