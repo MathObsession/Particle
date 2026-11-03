@@ -1,6 +1,7 @@
 import SwiftUI
 import AppKit
 import ParticleOneCore
+import ParticleModelLibrary
 import ParticleDesktopProtocol
 import TurboFieldfareMacPresentation
 
@@ -31,18 +32,23 @@ struct ParticleOneSettings: View {
                         Text("Instant skips reasoning using an empty thinking prefix and a zero-token reasoning budget. Thinking allows up to 64 reasoning tokens; Thinking · extended uses the model’s original behavior. Chat and Code remember their modes separately.").font(Design.body(10)).lineSpacing(4).foregroundStyle(Design.muted)
                     }.disabled(model.busy || model.loading)
                     section("Your model"){
-                        HStack{ParticleMark(size:42);VStack(alignment:.leading,spacing:4){Text(model.codeMode ? "Churo Code" : "Churo Chat").font(Design.medium(14));Text("4-bit · runs on your Mac").font(Design.body(10)).foregroundStyle(Design.muted)};Spacer();if model.connected{Button("Unload"){model.unload()}.disabled(model.busy)}}
+                        HStack{ParticleMark(size:42);VStack(alignment:.leading,spacing:4){Text(model.selectedModelName).font(Design.medium(14));Text(model.selectedModelDescriptor.quantization.label+" · runs on your Mac").font(Design.body(10)).foregroundStyle(Design.muted)};Spacer();if model.connected{Button("Unload"){model.unload()}.disabled(model.busy)}}
                         Text("Stored on: "+URL(fileURLWithPath:value.modelPath).deletingLastPathComponent().lastPathComponent).font(Design.mono(9)).foregroundStyle(Design.muted).lineLimit(2).textSelection(.enabled)
-                        HStack{Button("Choose existing model…"){model.chooseModel();value.modelPath=model.settings.modelPath}.disabled(model.connected || model.busy || model.loading);Button("Download model…"){model.showSettings=false;DispatchQueue.main.asyncAfter(deadline:.now()+0.3){model.showSetup=true}}.disabled(model.connected || model.busy || model.loading)}.font(Design.body(11))
+                        HStack{Button("Choose existing model…"){model.chooseModel();value.modelPath=model.settings.modelPath}.disabled(model.connected || model.busy || model.loading);Button("Model library…"){model.showSettings=false;DispatchQueue.main.asyncAfter(deadline:.now()+0.3){model.showModelLibrary=true}}.disabled(model.connected || model.busy || model.loading)}.font(Design.body(11))
                     }
                     section("Make it yours"){
-                        settingRow("Active routed experts") {Stepper("\(value.activeExperts) of 6",value:$value.activeExperts,in:2...6).font(Design.mono(12)).frame(width:130)}
-                        Text(value.activeExperts==6 ? "The original model’s expert selection." : "Experimental: uses fewer experts for speed. Answers can change; measured quality loss varies by task.").font(Design.body(10)).foregroundStyle(Design.muted)
-                        settingRow("RAM expert slots") {Stepper("\(value.slots)",value:$value.slots,in:6...16).font(Design.mono(12)).frame(width:105)}
-                        Text(String(format:"Expert buffers: about %.2f GiB. More slots may reduce disk reads; leave room for macOS.",Double(value.slots)*0.1267)).font(Design.body(10)).foregroundStyle(Design.muted)
+                        settingRow("Active routed experts") {Stepper("\(value.activeExperts) of \(model.selectedModelDescriptor.activeExperts)",value:$value.activeExperts,in:2...model.selectedModelDescriptor.activeExperts).font(Design.mono(12)).frame(width:130)}
+                        Text(value.activeExperts==model.selectedModelDescriptor.activeExperts ? "The original model’s expert selection." : "Experimental: uses fewer experts for speed. Answers can change; measured quality loss varies by task.").font(Design.body(10)).foregroundStyle(Design.muted)
+                        settingRow("RAM expert slots") {Stepper("\(value.slots)",value:$value.slots,in:slotRange).font(Design.mono(12)).frame(width:105)}
+                        Text(cacheBudgetText).font(Design.body(10)).foregroundStyle(Design.muted)
+                        DisclosureGroup("Storage and prompt tuning") {
+                            settingRow("Read workers") {Picker("Read workers",selection:$value.readWorkers){ForEach([1,2,4],id:\.self){Text("\($0)").tag($0)}}.labelsHidden().frame(width:120)}
+                            settingRow("Prompt chunk") {Picker("Prompt chunk",selection:$value.prefillChunk){ForEach([32,64,128],id:\.self){Text("\($0) tokens").tag($0)}}.labelsHidden().frame(width:120)}
+                            Text("Saved separately for each model. Larger chunks reuse each expert across more prompt tokens. Storage and memory limits determine which setting is fastest.").font(Design.body(10)).foregroundStyle(Design.muted)
+                        }.font(Design.body(11))
                         settingRow("Conversation capacity") {Picker("Conversation capacity",selection:$value.context){ForEach(contextChoices,id:\.self){Text("\($0) tokens").tag($0)}}.labelsHidden().frame(width:160)}
                         settingRow("Response allowance") {Picker("Response allowance",selection:$value.maxNew){ForEach(outputChoices,id:\.self){Text("\($0) tokens").tag($0)}}.labelsHidden().frame(width:160)}
-                        Text(String(format:"FP32 conversation memory: %.2f GiB. This Mac supports up to %d tokens. Input and output share this capacity; the full response allowance is reserved before a turn. Earlier turns are retained. Longer context takes more time to read.",Double(ParticleContextPolicy.kvBytes(context:value.context))/1_073_741_824,ParticleContextPolicy.maximum())).font(Design.body(10)).foregroundStyle(Design.muted)
+                        Text(contextBudgetText).font(Design.body(10)).foregroundStyle(Design.muted)
                         Toggle("Use the prepared SSD mirror when available",isOn:$value.useMirror).font(Design.body(11))
                     }.disabled(model.busy || model.loading)
                     section("Custom system prompt"){
@@ -71,7 +77,17 @@ struct ParticleOneSettings: View {
         }.frame(width:700,height:760).background(Design.paper).foregroundStyle(Design.ink).preferredColorScheme(value.appearance.colorScheme)
     }
     private var outputChoices:[Int]{Array(Set([128,256,512,768,1024,2048,4096,8192,16_384,32_768,65_536].filter{$0<value.context}+[value.maxNew])).sorted()}
-    private var contextChoices:[Int]{Array(Set(ParticleContextPolicy.available()+[value.context])).sorted()}
+    private var contextChoices:[Int]{Array(Set((model.selectedModelDescriptor.architecture == .sarvam ? ParticleContextPolicy.available() : [4096,8192,16384,32768,65536,131072,262144].filter{$0 <= ModelRuntimeProfile(model:model.selectedModelDescriptor).context})+[value.context])).sorted()}
+    private var slotRange:ClosedRange<Int>{model.selectedModelDescriptor.architecture == .sarvam ? 6...16 : 8...32}
+    private var cacheBudgetText:String{
+        if let bytes=model.library.installed.first(where:{$0.path==value.modelPath})?.profile.expertBytesPerSlot{return String(format:"Expert buffer budget: about %.2f GiB. Model, conversation and system memory are additional.",Double(bytes)*Double(value.slots)/1_073_741_824)}
+        return "More slots may reduce disk reads. Leave room for model weights, conversation memory and macOS."
+    }
+    private var contextBudgetText:String{
+        let descriptor=model.selectedModelDescriptor
+        let maximum=descriptor.architecture == .sarvam ? ParticleContextPolicy.maximum() : ModelRuntimeProfile(model:descriptor).context
+        return String(format:"Conversation memory budget: %.2f GiB. This Mac’s supported profile allows up to %d tokens. Input and output share this capacity; earlier turns are retained. Longer context takes more time to read.",Double(descriptor.kvBytesPerToken)*Double(value.context)/1_073_741_824,maximum)
+    }
     private func section<Content: View>(_ title: String,@ViewBuilder content: ()->Content)->some View {VStack(alignment:.leading,spacing:12){Text(title).font(Design.heading(20));content()}}
     private func settingRow<Content: View>(_ title: String,@ViewBuilder content: ()->Content)->some View {HStack{Text(title).font(Design.body(12));Spacer();content()}}
 }

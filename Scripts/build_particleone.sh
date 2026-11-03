@@ -5,6 +5,9 @@ source "$particle_workspace/Scripts/particle-env.sh"
 if [[ "${1:-}" != "--package-only" ]]; then
   "$particle_workspace/Scripts/particle" build -c release --product ParticleOne
   "$particle_workspace/Scripts/particle" build -c release --product ParticleCLI
+  "$particle_workspace/Scripts/particle" build -c release --product ParticlePack
+  "$particle_workspace/Scripts/particle" build -c release --product ParticleLibraryCLI
+  "$particle_workspace/Scripts/particle" build -c release --product ParticleMLXCLI
 else
   shift
 fi

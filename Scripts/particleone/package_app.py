@@ -18,7 +18,8 @@ a.output.mkdir(parents=True,exist_ok=True)
 def run(*args):subprocess.run([str(x) for x in args],check=True)
 help_text=subprocess.run([str(a.bin/'ParticleCLI'),'--help'],capture_output=True,text=True,check=True).stdout
 if '--desktop-events' not in help_text or '--reasoning-budget' not in help_text:raise SystemExit('Bundled engine lacks the desktop transport. Rebuild ParticleCLI.')
-for name in ['ParticleOne','ParticleCLI']:
+executables=['ParticleOne','ParticleCLI','ParticlePack','ParticleLibraryCLI','ParticleMLXCLI']
+for name in executables:
  if not (a.bin/name).is_file():raise SystemExit('Build '+name+' first.')
 app=a.output/'Particle.app'
 if app.exists():
@@ -29,8 +30,8 @@ if app.exists():
  if str(app.resolve())+'/Contents/MacOS/' in processes:raise SystemExit('Close this ParticleOne build before packaging again.')
 with tempfile.TemporaryDirectory(prefix='particleone-stage-',dir=a.output) as temp:
  stage=Path(temp)/'Particle.app';exe=stage/'Contents/MacOS';res=stage/'Contents/Resources';exe.mkdir(parents=True);res.mkdir(parents=True)
- for name in ['ParticleOne','ParticleCLI']:shutil.copy2(a.bin/name,exe/name)
- bundles=['Particle_ParticleOne.bundle','Particle_ParticleCore.bundle','Particle_TurboFieldfare.bundle','swift-transformers_Hub.bundle','swift-crypto_Crypto.bundle','SwiftMath_SwiftMath.bundle']
+ for name in executables:shutil.copy2(a.bin/name,exe/name)
+ bundles=['Particle_ParticleOne.bundle','Particle_ParticleCore.bundle','Particle_TurboFieldfare.bundle','swift-transformers_Hub.bundle','swift-crypto_Crypto.bundle','SwiftMath_SwiftMath.bundle','mlx-swift_Cmlx.bundle']
  for name in bundles:
   source=a.bin/name
   if not source.is_dir():raise SystemExit('Missing runtime resource bundle: '+name)
@@ -38,11 +39,13 @@ with tempfile.TemporaryDirectory(prefix='particleone-stage-',dir=a.output) as te
    if child.is_symlink():raise SystemExit('Resource symlink is not portable: '+str(child))
    if child.suffix in ['.gguf','.safetensors','.gturbo','.particle']:raise SystemExit('Model weights cannot be packaged.')
   shutil.copytree(source,res/name)
+ if not (res/'mlx-swift_Cmlx.bundle/Contents/Resources/default.metallib').is_file():raise SystemExit('Missing compiled MLX shaders; runtime must not require Xcode.')
  # Compile the Icon Composer document so macOS uses the full tile rather
  # than shrinking a legacy square into a synthesized enclosure.
  framework=a.bin/'Sparkle.framework'
  if not framework.is_dir():raise SystemExit('Missing Sparkle.framework; rebuild ParticleOne.')
  shutil.copy2(ROOT/'Scripts/particleone/Sparkle-LICENSE',res/'Sparkle-LICENSE')
+ for name in ['MLX-Swift-LICENSE','MLX-Swift-LM-LICENSE','Swift-Numerics-LICENSE']:shutil.copy2(ROOT/'Scripts/particleone'/name,res/name)
  frameworks=stage/'Contents/Frameworks';frameworks.mkdir()
  shutil.copytree(framework,frameworks/'Sparkle.framework',symlinks=True)
  icon_output=Path(temp)/'native-icons';icon_output.mkdir()
@@ -64,7 +67,7 @@ with tempfile.TemporaryDirectory(prefix='particleone-stage-',dir=a.output) as te
    target=nested/relative
    if target.exists():run('/usr/bin/codesign','--force','--sign',a.identity,'--preserve-metadata=entitlements',target)
   run('/usr/bin/codesign','--force','--sign',a.identity,frameworks/'Sparkle.framework')
- for name in ['ParticleCLI','ParticleOne']:run('/usr/bin/codesign','--force','--sign',a.identity,exe/name)
+ for name in executables:run('/usr/bin/codesign','--force','--sign',a.identity,exe/name)
  run('/usr/bin/codesign','--force','--sign',a.identity,stage);run('/usr/bin/codesign','--verify','--deep','--strict',stage)
  if app.exists():shutil.rmtree(app)
  shutil.move(stage,app)

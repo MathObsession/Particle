@@ -1,6 +1,6 @@
 # Build Particle from source
 
-Requires an Apple Silicon Mac, macOS 26+, Swift 6.2+, and Xcode with its Metal tools. Model weights are installed separately through the app's pinned public catalog. No Hugging Face token is required for that catalog.
+Requires an Apple Silicon Mac, macOS 26+, Swift 6.3+, and Xcode with its Metal tools. The pinned MLX dependency requires Swift 6.3; the installed app needs neither Xcode nor Python. Model weights are installed separately through the app's pinned public catalog. No Hugging Face token is required for that catalog.
 
 For the original development layout, Xcode and all compiler/dependency caches live on the Particle SD volume:
 

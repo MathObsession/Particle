@@ -361,7 +361,7 @@ private struct Options {
             let passes=try runner.benchmarkSession(seed:ids,options:configuration,candidate:o.execution,chunkSize:o.prefillChunk,cancellation:cancellation,progress:{ log("Particle benchmark: \($0)") })
             let encoder=JSONEncoder(); encoder.outputFormatting=[.prettyPrinted,.sortedKeys]
             FileHandle.standardOutput.write(try encoder.encode(passes)); print()
-            guard passes.allSatisfy(\.parityPassed) else { throw ParticleError.invalid("Session benchmark failed strict scalar parity; candidate remains experimental") }
+            guard configuration.candidateOnly == true ? passes.allSatisfy({$0.executionFinite == true}) : passes.allSatisfy(\.parityPassed) else { throw ParticleError.invalid("Session benchmark failed strict scalar parity; candidate remains experimental") }
             return
         }
         if o.comparePrefill {
@@ -389,6 +389,7 @@ private struct Options {
     @MainActor private static func interactive(_ initialOptions: Options, tokenizer: SarvamTokenizer, runner: SarvamRunner,
                                                cancellation: ParticleCancellation, initial: String, loadSeconds: Double) throws {
         var o=initialOptions
+        if o.desktop {desktopEvent(["event":"capabilities","protocol_version":2,"architecture":"sarvam_moe","native_experts":6,"tools":true,"reasoning":true,"context_limit":131072])}
         log("Particle: warm session ready. Type a message; /new clears chat, /quit exits. Raw mode uses independent completions.")
         let input = ParticleInputMailbox(); input.startStandardInput()
         var inputPromptShown = false

@@ -10,7 +10,7 @@ import TurboFieldfareMacPresentation
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApplication.shared.setActivationPolicy(.regular)
         if let model=Self.model {
-            model.updates.mayInstall = { [weak model] in model.map { !$0.busy && !$0.loading } ?? false }
+            model.updates.mayInstall = { [weak model] in model.map { !$0.busy && !$0.loading && !$0.modelInstallationActive } ?? false }
             model.updates.prepareForRelaunch = { [weak model] in
                 guard let model else { return }
                 while model.busy || model.loading {try? await Task.sleep(for:.milliseconds(250))}
@@ -35,6 +35,7 @@ import TurboFieldfareMacPresentation
         }
         if let index=CommandLine.arguments.firstIndex(of:"--agent-native-smoke"),CommandLine.arguments.indices.contains(index+1),let model=Self.model{let output=CommandLine.arguments[index+1];Task{await SmokeCheck.nativeAgent(model,output:output)}}
         if let index=CommandLine.arguments.firstIndex(of:"--web-smoke"),CommandLine.arguments.indices.contains(index+1){let output=CommandLine.arguments[index+1];Task{await SmokeCheck.web(output:output)}}
+        if let index=CommandLine.arguments.firstIndex(of:"--library-smoke"),CommandLine.arguments.indices.contains(index+1),let model=Self.model {LibrarySmokeCheck.run(model,output:CommandLine.arguments[index+1])}
         if let index=CommandLine.arguments.firstIndex(of:"--installer-smoke"),CommandLine.arguments.indices.contains(index+1) {
             let output=CommandLine.arguments[index+1];Task{await SmokeCheck.installer(output:output)}
         }
@@ -48,10 +49,13 @@ import TurboFieldfareMacPresentation
                 // A deterministic, process-owned preview avoids restored-window
                 // state from another running copy of the app. It uses test data.
                 for window in NSApp.windows{window.orderOut(nil)}
-                let window=NSWindow(contentRect:NSRect(x:0,y:0,width:1280,height:860),styleMask:[.titled,.closable,.resizable,.fullSizeContentView],backing:.buffered,defer:false)
+                let libraryPreview=CommandLine.arguments.contains("--preview-model-library")
+                let window=NSWindow(contentRect:NSRect(x:0,y:0,width:libraryPreview ? 840 : 1280,height:libraryPreview ? 690 : 860),styleMask:[.titled,.closable,.resizable,.fullSizeContentView],backing:.buffered,defer:false)
                 window.isReleasedWhenClosed=false;window.titlebarAppearsTransparent=true;window.titleVisibility = .hidden
                 window.appearance=NSAppearance(named:model.settings.appearance == .dark ? .darkAqua : .aqua)
-                window.contentView=NSHostingView(rootView:ParticleOneRootView(model:model))
+                if libraryPreview {window.backgroundColor=NSColor(Design.paper)}
+                if libraryPreview {window.contentView=NSHostingView(rootView:ModelLibraryView(model:model,library:model.library))}
+                else {window.contentView=NSHostingView(rootView:ParticleOneRootView(model:model))}
                 window.center();window.makeKeyAndOrderFront(nil);self.previewWindow=window
             }
             DispatchQueue.main.asyncAfter(deadline:.now()+2.5) {self.capturePreview(path,attempt:0)}
@@ -96,7 +100,7 @@ import TurboFieldfareMacPresentation
     @StoredState private var model: WorkspaceModel
     init() {
         Design.registerFonts()
-        let preview=CommandLine.arguments.contains("--render-preview") || CommandLine.arguments.contains("--preview") || CommandLine.arguments.contains("--installer-smoke") || CommandLine.arguments.contains("--web-smoke") || CommandLine.arguments.contains("--update-probe")
+        let preview=CommandLine.arguments.contains("--render-preview") || CommandLine.arguments.contains("--preview") || CommandLine.arguments.contains("--installer-smoke") || CommandLine.arguments.contains("--web-smoke") || CommandLine.arguments.contains("--update-probe") || CommandLine.arguments.contains("--library-smoke")
         let value=WorkspaceModel(preview:preview,chatPreview:CommandLine.arguments.contains("--preview-chat"))
         _model=StoredState(initialValue:value);ParticleOneDelegate.model=value
     }

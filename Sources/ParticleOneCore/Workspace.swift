@@ -1,5 +1,6 @@
 import Foundation
 import ParticleDesktopProtocol
+import ParticleModelLibrary
 
 public struct ResponseMetrics:Codable,Sendable,Equatable {
     public let outputTokens:Int
@@ -29,12 +30,13 @@ public struct Conversation: Codable, Identifiable, Sendable, Equatable {
     public var title="New conversation"
     public var updatedAt=Date()
     public var messages=[ChatMessage]()
+    public var modelID: String?
     public init() {}
     /// A new branch excludes the edited question, its old answer and all later
     /// turns. The original record and its stable message IDs are left intact.
     public func continuation(before messageID:UUID)->Conversation? {
         guard let index=messages.firstIndex(where:{$0.id==messageID}),messages[index].role=="user" else{return nil}
-        var branch=Conversation();branch.title=String(title.prefix(36))+" · edited";branch.messages=Array(messages.prefix(index));return branch
+        var branch=Conversation();branch.modelID=modelID;branch.title=String(title.prefix(36))+" · edited";branch.messages=Array(messages.prefix(index));return branch
     }
     public var history: [DesktopMessage] {
         var result=[DesktopMessage]();var index=0
@@ -86,8 +88,11 @@ public enum PersonalMemory {
     }
 }
 public struct OneSettings: Codable, Sendable, Equatable {
+    public var modelID=ModelDescriptor.sarvam.id
     public var modelPath=FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/ParticleOne/Models/churo-chat.particle").path
     public var slots=12
+    public var readWorkers=4
+    public var prefillChunk=128
     public var context=ParticleContextPolicy.recommended()
     public var maxNew=ParticleContextPolicy.defaultOutput
     public var activeExperts=6
@@ -99,11 +104,14 @@ public struct OneSettings: Codable, Sendable, Equatable {
     public var appearance=AppAppearance.system
     public var rememberPersonalDetails=false
     public init() {}
-    private enum CodingKeys: String,CodingKey {case modelPath,slots,context,maxNew,activeExperts,useMirror,system,responseStyle,codeResponseStyle,contextPolicyVersion,appearance,rememberPersonalDetails}
+    private enum CodingKeys: String,CodingKey {case modelID,modelPath,slots,readWorkers,prefillChunk,context,maxNew,activeExperts,useMirror,system,responseStyle,codeResponseStyle,contextPolicyVersion,appearance,rememberPersonalDetails}
     public init(from decoder: Decoder) throws {
         self.init();let c=try decoder.container(keyedBy:CodingKeys.self)
+        modelID=try c.decodeIfPresent(String.self,forKey:.modelID) ?? ModelDescriptor.sarvam.id
         modelPath=try c.decodeIfPresent(String.self,forKey:.modelPath) ?? modelPath
         slots=try c.decodeIfPresent(Int.self,forKey:.slots) ?? slots
+        readWorkers=try c.decodeIfPresent(Int.self,forKey:.readWorkers) ?? readWorkers
+        prefillChunk=try c.decodeIfPresent(Int.self,forKey:.prefillChunk) ?? prefillChunk
         context=try c.decodeIfPresent(Int.self,forKey:.context) ?? context
         maxNew=try c.decodeIfPresent(Int.self,forKey:.maxNew) ?? maxNew
         activeExperts=try c.decodeIfPresent(Int.self,forKey:.activeExperts) ?? activeExperts
@@ -126,11 +134,24 @@ public struct OneSettings: Codable, Sendable, Equatable {
         let mirror=useMirror && modelPath.hasSuffix(".particle") && FileManager.default.fileExists(atPath:receipt.path)
         var args=["--model",modelPath,"--interactive","--desktop-events","--reasoning-budget",String(responseStyle.budget),"--max-context",String(context),"--max-new",String(ParticleContextPolicy.outputAllowance(requested:maxNew,context:context)),"--expert-cache-slots",String(slots),"--active-experts",String(activeExperts),"--system",systemOverride ?? system,"--attention","reference","--projection","vector","--deferred-decode","--grouped-experts","--ffn-vector","--cooperative-quant"]
         if responseStyle != .direct {args += ["--thinking"]}
+        args += ["--source-read-workers",String(readWorkers),"--prefill-chunk",String(prefillChunk)]
         if mirror { args += ["--storage-profile","sd-hybrid","--ssd-cache-policy","mirror","--ssd-cache-mib","18432","--mirror-read-hint","nocache","--pipelined-verification","--ssd-read-workers","2"] }
         else { args += ["--no-ssd-cache"] }
         return args
     }
-    public var valid: Bool { (6...16).contains(slots) && ParticleContextPolicy.capacities.contains(context) && (64...ParticleContextPolicy.modelLimit).contains(maxNew) && (2...6).contains(activeExperts) && system.utf8.count<=32_768 }
+    public func arguments(for model: ModelDescriptor, systemOverride: String? = nil) -> [String] {
+        if model.architecture == .sarvam {return arguments(systemOverride:systemOverride)}
+        return ["--model",modelPath,"--interactive","--desktop-events","--reasoning-budget",String(responseStyle.budget),
+                "--max-context",String(context),"--max-new",String(min(maxNew,max(64,context-512))),
+                "--expert-cache-slots",String(slots),"--active-experts",String(activeExperts),"--prefill-chunk",String(prefillChunk),"--read-workers",String(readWorkers)]
+    }
+    public func isValid(for model: ModelDescriptor) -> Bool {
+        if model.architecture == .sarvam {return valid}
+        return [1,2,4].contains(readWorkers) && [32,64,128].contains(prefillChunk) && (8...32).contains(slots) && [4096,8192,16384,32768,65536,131072,262144].contains(context) &&
+            context <= min(model.contextLimit,ModelRuntimeProfile(model:model).context) && (64...16384).contains(maxNew) &&
+            (2...model.activeExperts).contains(activeExperts) && system.utf8.count <= 32_768
+    }
+    public var valid: Bool { [1,2,4].contains(readWorkers) && [32,64,128].contains(prefillChunk) && (6...16).contains(slots) && ParticleContextPolicy.capacities.contains(context) && (64...ParticleContextPolicy.modelLimit).contains(maxNew) && (2...6).contains(activeExperts) && system.utf8.count<=32_768 }
 }
 public struct SavedWorkspace: Codable, Sendable {
     public var version=1
@@ -160,8 +181,9 @@ public struct SavedWorkspace: Codable, Sendable {
         conversations=try c.decode([Conversation].self,forKey:.conversations)
         selected=try c.decodeIfPresent(UUID.self,forKey:.selected)
     }
-    public var systemPrompt: String {
-        var prompt=ParticleIdentity.prompt()+"\n"+settings.system
+    public var systemPrompt: String {systemPrompt(model:.sarvam)}
+    public func systemPrompt(model: ModelDescriptor) -> String {
+        var prompt=ParticleIdentity.prompt(model:model)+"\n"+settings.system
         if settings.responseStyle == .direct {prompt += "\nGive the answer directly. Do not write analysis, plans, or internal reasoning. For a simple greeting, reply with one short friendly sentence."}
         if settings.responseStyle == .brief {prompt += "\nKeep any reasoning brief and give a clear final answer."}
         if !memories.isEmpty {

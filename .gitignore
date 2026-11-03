@@ -71,7 +71,10 @@ __pycache__/
 *.zip
 *.dmg
 *.xip
-/docs/validation/
+/docs/validation/*
+!/docs/validation/model-library/
+/docs/validation/model-library/*
+!/docs/validation/model-library/STATUS.md
 /docs/particleone/validation*/
 /docs/particleone/icon-update/
 /docs/particleone/standalone/

@@ -12,7 +12,7 @@ concurrency:
 jobs:
   desktop:
     runs-on: macos-26
-    timeout-minutes: 35
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - name: Report toolchain
@@ -25,7 +25,10 @@ jobs:
         run: |
           swift build -c release --product ParticleOne
           swift build -c release --product ParticleCLI
+          swift build -c release --product ParticlePack
+          swift build -c release --product ParticleLibraryCLI
+          swift build -c release --product ParticleMLXCLI
       - name: Run model-free focused tests
-        run: Scripts/test.sh -c release --filter 'AgentRecoveryTests|ContextAndModeTests|AgentHarnessTests|AgentPromptRenderingTests|ParticleOneTests|MessageEditingTests|NoThinkingTests|ThinkingControlTests|WorkspacePolishTests'
+        run: Scripts/test.sh -c release --filter 'ModelLibraryTests|ChronosCompatibilityTests|ModelCalibrationTests|ChronosTextTests|StreamedExpertTests|AgentRecoveryTests|ContextAndModeTests|AgentHarnessTests|AgentPromptRenderingTests|ParticleOneTests|MessageEditingTests|NoThinkingTests|ThinkingControlTests|WorkspacePolishTests'
       - name: Validate update publisher and host
         run: python3 Scripts/particleone/test_updates.py

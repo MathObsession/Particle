@@ -1,6 +1,7 @@
 import SwiftUI
 import AppKit
 import ParticleOneCore
+import ParticleModelLibrary
 import TurboFieldfareMacPresentation
 
 struct ParticleOneRootView: View {
@@ -42,6 +43,7 @@ struct ParticleOneRootView: View {
         .ignoresSafeArea(.container,edges:.top)
         .preferredColorScheme(model.settings.appearance.colorScheme)
         .sheet(isPresented:$model.showSettings) { ParticleOneSettings(model:model) }
+        .sheet(isPresented:$model.showModelLibrary) { ModelLibraryView(model:model,library:model.library) }
         .sheet(isPresented:$model.showNewWorkspace){NewWorkspaceView(model:model)}
         .sheet(isPresented:$model.showMemory){MemoryManagerView(model:model)}
         .sheet(item:$editingRequest){request in EditMessageView(model:model,request:request)}
@@ -93,8 +95,9 @@ struct ParticleOneRootView: View {
                     }
             }.scrollIndicators(.hidden)
             Spacer(minLength:15)
+            Button{model.showModelLibrary=true}label:{Label("Models",systemImage:"square.stack.3d.up").font(Design.medium(11)).frame(maxWidth:.infinity,alignment:.leading).contentShape(Rectangle())}.buttonStyle(HitButtonStyle()).padding(.bottom,8)
             VStack(spacing:7){
-                Button{showingExperts.toggle()}label:{sidebarSelector(icon:"cpu",title:model.codeMode ? "Churo Code" : "Churo Chat",detail:"\(model.settings.activeExperts) experts · 4-bit")}.buttonStyle(.plain).popover(isPresented:$showingExperts,arrowEdge:.leading){expertPicker}.accessibilityLabel("Model selector")
+                Button{showingExperts.toggle()}label:{sidebarSelector(icon:"cpu",title:model.selectedModelName,detail:"\(model.settings.activeExperts) experts · \(model.selectedModelDescriptor.quantization.label)")}.buttonStyle(.plain).popover(isPresented:$showingExperts,arrowEdge:.leading){expertPicker}.accessibilityLabel("Model selector")
                 Button{showingWorkspaces.toggle()}label:{sidebarSelector(icon:"square.grid.2x2",title:model.state.name,detail:"Workspace")}.buttonStyle(.plain).disabled(model.busy || model.loading).popover(isPresented:$showingWorkspaces,arrowEdge:.leading){workspacePicker}.accessibilityLabel("Workspace selector")
             }.padding(.bottom,12)
             Button {model.showMemory=true} label:{HStack(spacing:9){Image(systemName:"brain").foregroundStyle(Design.green);Text("Saved memory");Spacer();Text("\(model.state.memories.count)").foregroundStyle(Design.muted)}.font(Design.body(11)).frame(maxWidth:.infinity,alignment:.leading).contentShape(Rectangle())}.buttonStyle(HitButtonStyle())
@@ -128,21 +131,16 @@ struct ParticleOneRootView: View {
     }
     private var expertPicker: some View {
         VStack(alignment:.leading,spacing:12) {
-            Text("Active experts").font(Design.heading(20))
-            Text("Fewer experts trade answer quality for speed.").font(Design.body(10)).foregroundStyle(Design.muted)
-            ForEach(2...6,id:\.self) { count in
-                Button {model.setExpertCount(count);showingExperts=false} label:{
-                    HStack {
-                        Text("\(count) of 6").font(Design.medium(12))
-                        Spacer()
-                        Text(count==6 ? "Original" : "Experimental").font(Design.body(10)).foregroundStyle(Design.muted)
-                        if count==model.settings.activeExperts {Image(systemName:"checkmark").font(.system(size:11))}
-                    }.padding(10).contentShape(Rectangle()).background(count==model.settings.activeExperts ? Design.sidebar : .clear,in:RoundedRectangle(cornerRadius:9))
+            Text("Your models").font(Design.heading(20))
+            ForEach(model.library.installed){installed in
+                Button{showingExperts=false;model.useInstalledModel(installed)}label:{
+                    HStack{Text(installed.descriptor.name).font(Design.medium(12));Spacer();if installed.path == model.settings.modelPath{Image(systemName:"checkmark").foregroundStyle(Design.green)}}.padding(10).frame(maxWidth:.infinity,alignment:.leading).contentShape(Rectangle())
                 }.buttonStyle(.plain).disabled(model.busy || model.loading)
             }
             Divider()
-            Button("Model settings…"){showingExperts=false;model.showSettings=true}.buttonStyle(.plain).font(Design.body(11))
-        }.padding(18).frame(width:270).foregroundStyle(Design.ink).background(Design.paper)
+            Button("Browse model library…"){showingExperts=false;model.showModelLibrary=true}.buttonStyle(HitButtonStyle())
+            Button("Model settings…"){showingExperts=false;model.showSettings=true}.buttonStyle(HitButtonStyle())
+        }.font(Design.body(11)).padding(18).frame(width:290).foregroundStyle(Design.ink).background(Design.paper)
     }
     private var welcome: some View {
         VStack(spacing:8){
@@ -218,13 +216,14 @@ struct ParticleOneRootView: View {
             HStack(spacing:6){Image(systemName:model.thinkingEnabled ? "sparkle" : "bolt");Text(model.thinkingEnabled ? "Thinking" : "Instant")}
                 .font(Design.medium(11)).foregroundStyle(model.thinkingEnabled ? Design.green : Design.muted)
                 .padding(.horizontal,11).frame(height:34).background(model.thinkingEnabled ? Design.green.opacity(0.12) : Design.line.opacity(0.24),in:Capsule()).contentShape(Capsule())
-        }.buttonStyle(.plain).disabled(model.busy || model.loading)
+        }.buttonStyle(.plain).disabled(model.busy || model.loading || !model.conversationUsesCurrentModel)
             .accessibilityLabel("Response mode").accessibilityValue(model.thinkingEnabled ? "Thinking" : "Instant")
             .help(model.busy || model.loading ? "Wait for this response or stop it before changing thinking." : "Switch between Instant answers and Thinking for the next reply.")
     }
     private var sendControl:some View {
         Group {
             if model.busy {Button{model.stop()}label:{Label("Stop",systemImage:"stop.fill")}.buttonStyle(WashedButtonStyle(compact:true))}
+            else if !model.conversationUsesCurrentModel {Button("Open Models"){model.showModelLibrary=true}.buttonStyle(WashedButtonStyle(compact:true))}
             else if !model.connected {Button{model.loadModel()}label:{HStack(spacing:7){if model.loading{ProgressView().controlSize(.mini)};Text(model.loading ? "Loading…" : "Load model");Image(systemName:"arrow.up.right")}}.buttonStyle(WashedButtonStyle(compact:true)).disabled(model.loading)}
             else {Button{model.submit()}label:{Image(systemName:"arrow.up").font(.system(size:14,weight:.medium)).frame(width:18,height:16)}.buttonStyle(WashedButtonStyle(compact:true)).disabled(model.draft.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty).keyboardShortcut(.return,modifiers:.command).accessibilityLabel("Send message")}
         }
@@ -235,8 +234,9 @@ struct ParticleOneRootView: View {
             VStack(spacing:7){
                 HStack(spacing:12){
                     ZStack(alignment:.topLeading){
-                        if model.draft.isEmpty {Text("What’s on your mind?").font(Design.body(14)).foregroundStyle(Design.muted).padding(.top,8).padding(.leading,5).allowsHitTesting(false)}
-                        ComposerInput(text:$model.draft){model.submit()}.frame(height:isWelcome ? (model.draft.contains("\n") ? 72 : 36) : 66)
+                        if model.draft.isEmpty && model.conversationUsesCurrentModel {Text("What’s on your mind?").font(Design.body(14)).foregroundStyle(Design.muted).padding(.top,8).padding(.leading,5).allowsHitTesting(false)}
+                        if model.conversationUsesCurrentModel {ComposerInput(text:$model.draft){model.submit()}.frame(height:isWelcome ? (model.draft.contains("\n") ? 72 : 36) : 66)}
+                        else {Text("Reinstall this model to continue.").font(Design.body(13)).foregroundStyle(Design.muted).frame(maxWidth:.infinity,minHeight:66,alignment:.leading)}
                     }.frame(maxWidth:.infinity)
                     if isWelcome {thinkingToggle;sendControl}
                 }
@@ -244,7 +244,7 @@ struct ParticleOneRootView: View {
                     HStack(spacing:8){
                         Image(systemName:"circle.dotted").font(.system(size:12)).foregroundStyle(Design.green)
                         Text(model.status).font(Design.body(10)).foregroundStyle(Design.muted).lineLimit(1)
-                        if model.settings.activeExperts != 6 {Text("FAST · EXPERIMENTAL").font(Design.medium(8)).foregroundStyle(Design.green).padding(.horizontal,7).padding(.vertical,4).background(Design.line.opacity(0.5),in:Capsule())}
+                        if model.settings.activeExperts != model.selectedModelDescriptor.activeExperts {Text("FAST · EXPERIMENTAL").font(Design.medium(8)).foregroundStyle(Design.green).padding(.horizontal,7).padding(.vertical,4).background(Design.line.opacity(0.5),in:Capsule())}
                         Spacer(minLength:4);thinkingToggle;sendControl
                     }
                 }

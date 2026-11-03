@@ -50,6 +50,22 @@ The dependency license files remain authoritative. For binary distribution,
 collect their license and NOTICE files from the exact revisions in
 `Package.resolved`; do not treat this summary as a substitute for that bundle.
 
+## Particle model library additions (November 2026)
+
+The native experimental Chronos worker uses MLX Swift 0.32.3 and MLX Swift LM
+3.32.3 (MIT, copyright Apple Inc.), plus Swift Numerics 1.1.1 (Apache-2.0 with
+Runtime Library Exception) and Swift Syntax 603.0.2 (Apache-2.0 with Runtime
+Library Exception). Exact revisions remain in `Package.resolved`. MLX license
+texts are preserved under `Scripts/particleone/` and bundled with the app.
+The streamed expert adapter follows the upstream Qwen3.5 MoE graph and selected
+expert operations; source comments identify the adapted router expression.
+
+Chronos conversion preserves the original checkpoint bytes, model card, license
+files and pinned provenance. The first source is
+`Lifeboat78/Chronos-Ornith-1.5-35B-A3B-MLX-3bit` at
+`a982bb2ed776bf0db64375de480a1d0a00475a99`; its model-card license is MIT.
+Model weights are downloaded separately, never included in the application.
+
 ## Particle GGML K-quant compatibility
 
 The Q4_K, Q5_K, and Q6_K block decoding in Particle’s Metal kernels and independent CPU validation follows ggml-org/llama.cpp’s MIT-licensed `ggml/src/ggml-quants.c` and `ggml/src/ggml-common.h`. Copyright (c) 2023–2026 The ggml authors. The MIT permission notice is preserved in `docs/licenses/GGML-MIT.txt`. Particle does not embed or invoke the llama.cpp inference engine.

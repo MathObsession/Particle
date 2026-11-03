@@ -1,6 +1,19 @@
 import Foundation
 import CryptoKit
 
+/// Additive handshake: legacy Sarvam workers may omit it; new adapters must
+/// declare their architecture before the host enables a conversation.
+public struct DesktopCapabilities: Codable, Sendable, Equatable {
+    public let architecture: String
+    public let tools: Bool
+    public let reasoning: Bool
+    public let contextLimit: Int
+    public let nativeExperts: Int
+    public let protocolVersion: Int
+    enum CodingKeys: String,CodingKey {case architecture,tools,reasoning;case contextLimit="context_limit",nativeExperts="native_experts",protocolVersion="protocol_version"}
+    public var valid: Bool {protocolVersion == 2 && ["sarvam_moe","qwen3_5_moe"].contains(architecture) && (4096...4_194_304).contains(contextLimit) && (1...4096).contains(nativeExperts)}
+}
+
 /// Newline-delimited JSON only on the opt-in desktop transport. Never carries secrets.
 public struct DesktopMessage: Codable, Sendable, Equatable {
     public let role: String
@@ -73,12 +86,14 @@ public struct DesktopReasoningLimiter: Sendable {
     public private(set) var thinking=false
     public private(set) var used=0
     public private(set) var closures=0
-    public init(budget: Int){self.budget=budget}
+    private let openingToken: Int
+    private let closingToken: Int
+    public init(budget: Int, openingToken: Int = 23, closingToken: Int = 24){self.budget=budget;self.openingToken=openingToken;self.closingToken=closingToken}
     public var mustClose: Bool {budget>=0 && thinking && used>=budget}
     public var exhausted: Bool {closures>=3 && mustClose}
     public mutating func accept(_ token: Int) {
-        if token==23 {thinking=true}
-        else if token==24 {if thinking {closures+=1};thinking=false}
+        if token==openingToken {thinking=true}
+        else if token==closingToken {if thinking {closures+=1};thinking=false}
         else if thinking {used+=1}
     }
 }

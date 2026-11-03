@@ -2,8 +2,10 @@ import AppKit
 import SwiftUI
 import ParticleOneCore
 import ParticleDesktopProtocol
+import ParticleModelLibrary
+import Combine
 
-private final class DesktopPipeReader: @unchecked Sendable {
+final class DesktopPipeReader: @unchecked Sendable {
     private let queue=DispatchQueue(label:"app.particleone.stream")
     private var decoder=DesktopLineDecoder()
     private let receive: @Sendable (Data)->Void
@@ -27,6 +29,7 @@ private final class DesktopPipeReader: @unchecked Sendable {
     @Published var updateRestartPending=false
     @Published var showSettings=false
     @Published var showSetup=false
+    @Published var showModelLibrary=false
     @Published var rate: Double?
     @Published var contextUsed=0
     @Published var inputVerified: Bool?
@@ -37,6 +40,13 @@ private final class DesktopPipeReader: @unchecked Sendable {
     let code=CodeWorkspaceModel()
     let updates=AppUpdater()
     let installer=ModelInstaller()
+    let library: ModelLibraryStore
+    var libraryInstallJob: UUID?
+    var nativeLibraryProcess: Process?
+    var nativeLibraryTask: Task<Void,Never>?
+    var nativeLibrarySession = UUID()
+    var nativeLibraryIntent: ModelInstallStage?
+    private var libraryInstallObserver: AnyCancellable?
     let preview: Bool
     private(set) var directory: URL
     private var saveBlocked=false
@@ -48,18 +58,29 @@ private final class DesktopPipeReader: @unchecked Sendable {
     private var errorReader: DesktopPipeReader?
     private var currentReply: UUID?
     private var workerSession=UUID()
+    private var workerCapabilities: DesktopCapabilities?
     var settings: OneSettings { state.settings }
     var selected: Conversation? { state.conversations.first{$0.id==state.selected} }
     var filtered: [Conversation] { state.conversations.filter { search.isEmpty || $0.title.localizedCaseInsensitiveContains(search) || $0.messages.contains{$0.content.localizedCaseInsensitiveContains(search)} }.sorted{$0.updatedAt>$1.updatedAt} }
     init(preview: Bool = false,chatPreview: Bool = false) {
         self.preview=preview
         let override=ProcessInfo.processInfo.environment["PARTICLEONE_DATA_PATH"]
+        library=ModelLibraryStore(root:override.map{URL(fileURLWithPath:$0,isDirectory:true)} ?? WorkspacePersistence.defaultDirectory)
         let last=UserDefaults.standard.string(forKey:"ParticleOne.lastWorkspaceDirectory").map{URL(fileURLWithPath:$0,isDirectory:true)}
         directory=override.map{URL(fileURLWithPath:$0,isDirectory:true)} ?? last.flatMap{FileManager.default.fileExists(atPath:$0.appendingPathComponent("particleone.sqlite").path) ? $0 : nil} ?? WorkspacePersistence.defaultDirectory
         code.host=self
         if !preview {
             do {state=try WorkspacePersistence.load(from:directory);workspaces=try WorkspacePersistence.list(in:directory)}
             catch {saveBlocked=true;notice="Your saved workspace could not be opened. Saving is paused to preserve the original database and transcripts. Open another workspace folder to continue."}
+        }
+        for index in state.conversations.indices where state.conversations[index].modelID == nil {state.conversations[index].modelID=ModelDescriptor.sarvam.id}
+        for index in state.agentSessions.indices where state.agentSessions[index].modelID == nil {state.agentSessions[index].modelID=ModelDescriptor.sarvam.id}
+        libraryInstallObserver=installer.objectWillChange.sink { [weak self] _ in
+            Task { @MainActor in
+                guard let self,let id=self.libraryInstallJob else{return}
+                let stage:ModelInstallStage=self.installer.running ? (self.installer.status.hasPrefix("Verifying") ? .verifying : .downloading) : (self.installer.error == nil ? .paused : .failed)
+                self.library.updateJob(id,stage:stage,progress:self.installer.progress,detail:self.installer.status)
+            }
         }
         if state.conversations.isEmpty { newConversation() }
         else if !state.conversations.contains(where:{$0.id==state.selected}) {state.selected=state.conversations.first?.id}
@@ -91,8 +112,12 @@ private final class DesktopPipeReader: @unchecked Sendable {
     }
     func inspectModel() {
         guard !preview else { return }
+        if settings.modelID != ModelDescriptor.sarvam.id {
+            guard Self.modelExists(settings.modelPath),library.installed.contains(where:{$0.id==settings.modelID && $0.path==settings.modelPath}) else {notice="This conversation’s model is unavailable. Reinstall or re-import it from Models; your transcript is preserved.";showModelLibrary=true;return}
+            return
+        }
         let candidates=[settings.modelPath,WorkspacePersistence.defaultDirectory.appendingPathComponent("Models/churo-chat.particle").path,directory.appendingPathComponent("Models/sarvam-30b-q4_k_m.particle").path,"/Volumes/Particle/Models/sarvam-30b/sarvam-30b-q4_k_m.particle"]
-        if let path=candidates.first(where:Self.modelExists) { state.settings.modelPath=path;persist() }
+        if let path=candidates.first(where:Self.modelExists) { state.settings.modelPath=path;library.rememberExistingSarvam(path,settings:settings);persist() }
         else { showSetup=true;beginInstall() }
     }
     static func modelExists(_ path: String) -> Bool {
@@ -100,36 +125,49 @@ private final class DesktopPipeReader: @unchecked Sendable {
         if path.hasSuffix(".particle") { return FileManager.default.fileExists(atPath:root.appendingPathComponent("verified-install.json").path) && FileManager.default.fileExists(atPath:root.appendingPathComponent("manifest.json").path) }
         return path.lowercased().hasSuffix(".gguf") && FileManager.default.fileExists(atPath:path)
     }
-    func beginInstall(root: URL? = nil) {
-        guard !preview else { return }
-        installer.start(root:root ?? directory.appendingPathComponent("Models",isDirectory:true)) { [weak self] model in
-            guard let self else{return};self.state.settings.modelPath=model.path;self.showSetup=false;self.persist();self.loadModel()
+    func beginInstall(root: URL? = nil, selectWhenComplete: Bool = true) {
+        guard !preview,!modelInstallationActive else { return }
+        let destination=root ?? library.managedRoot
+        if libraryInstallJob == nil {libraryInstallJob=library.beginDefaultJob(destination:destination)}
+        guard libraryInstallJob != nil else {notice=library.message ?? "Another installation is already queued.";return}
+        installer.start(root:destination) { [weak self] model in
+            guard let self else{return}
+            let managed=model.deletingLastPathComponent().standardizedFileURL == self.library.managedRoot.standardizedFileURL
+            guard self.library.register(.sarvam,path:model.path,managed:managed) else {
+                let detail="The model was verified, but its library record could not be saved. Model files were preserved."
+                self.notice=detail
+                if let id=self.libraryInstallJob {self.library.updateJob(id,stage:.failed,progress:1,detail:detail);self.libraryInstallJob=nil}
+                return
+            }
+            if let id=self.libraryInstallJob {self.library.updateJob(id,stage:.ready,progress:1,detail:"Verified and ready");self.libraryInstallJob=nil}
+            if selectWhenComplete {self.state.settings.modelPath=model.path;self.state.settings.modelID=ModelDescriptor.sarvam.id;self.library.updateProfile(path:model.path,settings:self.settings);self.showSetup=false;self.persist();self.loadModel()}
         }
     }
     func chooseModel() {
-        let panel=NSOpenPanel();panel.canChooseDirectories=true;panel.canChooseFiles=true;panel.allowsMultipleSelection=false
-        panel.message="Choose a verified .particle folder or Churo-compatible Q4_K_M GGUF."
-        if panel.runModal() == .OK,let url=panel.url {
-            guard Self.modelExists(url.path) else { notice="Choose a verified .particle model folder or a GGUF file.";return }
-            state.settings.modelPath=url.path;persist();showSetup=false
-        }
+        showSettings=false;showSetup=false;showModelLibrary=true
+        if installer.running {
+            installer.pause()
+            Task {for _ in 0..<100 {if !installer.running {importLibraryModel();return};try? await Task.sleep(for:.milliseconds(100))}}
+        } else {Task {try? await Task.sleep(for:.milliseconds(250));importLibraryModel()}}
     }
     func newConversation() {
         guard !busy,!loading else{return}
-        var chat=Conversation()
-        if let empty=state.conversations.first(where:{$0.messages.isEmpty}) { chat=empty }
+        var chat=Conversation();chat.modelID=settings.modelID
+        if let empty=state.conversations.first(where:{$0.messages.isEmpty && $0.modelID == settings.modelID}) { chat=empty }
         else { state.conversations.insert(chat,at:0) }
         state.selected=chat.id;draft="";rate=nil;contextUsed=0
-        if connected { sendCommand(DesktopCommand("reset",system:state.systemPrompt,reasoningBudget:settings.responseStyle.budget)) };persist()
+        if connected { sendCommand(DesktopCommand("reset",system:currentSystemPrompt,reasoningBudget:settings.responseStyle.budget)) };persist()
     }
     func select(_ id: UUID) {
-        guard !busy,!loading,id != state.selected else{return};state.selected=id;draft="";rate=nil;contextUsed=0
-        if connected { sendCommand(DesktopCommand("restore",messages:selected?.history ?? [],system:state.systemPrompt,reasoningBudget:settings.responseStyle.budget)) };persist()
+        guard !busy,!loading,let chat=state.conversations.first(where:{$0.id==id}) else{return}
+        let available=prepareConversationModel(chat.modelID)
+        state.selected=id;draft="";rate=nil;contextUsed=0
+        if available && connected { sendCommand(DesktopCommand("restore",messages:selected?.history ?? [],system:currentSystemPrompt,reasoningBudget:settings.responseStyle.budget)) };persist()
     }
     func requestConversationDeletion(_ id:UUID?=nil){guard !busy,!loading else{return};pendingConversationDeletion=id ?? state.selected}
     func editAndRegenerate(conversationID:UUID,messageID:UUID,text:String)->Bool {
         let replacement=text.trimmingCharacters(in:.whitespacesAndNewlines)
-        guard connected,!busy,!loading,!replacement.isEmpty,replacement.utf8.count<900_000 else{return false}
+        guard connected,conversationUsesCurrentModel,!busy,!loading,!replacement.isEmpty,replacement.utf8.count<900_000 else{return false}
         guard let original=state.conversations.first(where:{$0.id==conversationID}),var branch=original.continuation(before:messageID) else{notice="That message is no longer available in this workspace.";return false}
         if original.messages.first?.id==messageID {branch.title=String(replacement.prefix(36)).replacingOccurrences(of:"\n",with:" ")+" · edited"}
         let savedDraft=draft
@@ -142,10 +180,11 @@ private final class DesktopPipeReader: @unchecked Sendable {
         if state.selected==id { state.selected=nil;newConversation() };persist()
     }
     func updateSettings(_ value: OneSettings) {
-        guard value.valid else{return}
-        if busy || loading {state.settings.appearance=value.appearance;persist();return}
+        let descriptor=library.installed.first(where:{$0.path==value.modelPath})?.descriptor ?? .sarvam
+        guard value.isValid(for:descriptor) else{return}
+        if busy || loading || library.converting {state.settings.appearance=value.appearance;persist();return}
         let old=state.settings
-        state.settings=value;persist()
+        state.settings=value;library.updateProfile(path:value.modelPath,settings:value);persist()
         // Appearance and memory preferences never require reading model weights.
         var engineOld=old;engineOld.appearance=value.appearance;engineOld.rememberPersonalDetails=value.rememberPersonalDetails;engineOld.system=value.system;engineOld.responseStyle=value.responseStyle;engineOld.codeResponseStyle=value.codeResponseStyle
         if engineOld != value && connected {reloadWorker()}
@@ -161,8 +200,8 @@ private final class DesktopPipeReader: @unchecked Sendable {
         var value=settings;if codeMode{value.codeResponseStyle=enabled ? .brief : .direct}else{value.responseStyle=enabled ? .brief : .direct};updateSettings(value)
     }
     func setUsername(_ name:String){let clean=name.trimmingCharacters(in:.whitespacesAndNewlines);guard !clean.isEmpty,clean.count<=80 else{return};state.username=clean;persist()}
-    func setCodeMode(_ enabled:Bool){guard !busy,!loading else{return};codeMode=enabled;if enabled{code.restoreSelection()}else{restoreSelected()}}
-    func restoreSelected(){contextUsed=0;rate=nil;if connected{sendCommand(DesktopCommand("restore",messages:selected?.history ?? [],system:state.systemPrompt,reasoningBudget:settings.responseStyle.budget))}}
+    func setCodeMode(_ enabled:Bool){guard !busy,!loading else{return};if enabled && !selectedModelDescriptor.supportsTools{notice="This model is available for chat. Its coding tools have not qualified yet.";return};code.flushDraft();codeMode=enabled;if enabled{code.restoreSelection()}else if prepareConversationModel(selected?.modelID){restoreSelected()}}
+    func restoreSelected(){contextUsed=0;rate=nil;if !codeMode && conversationUsesCurrentModel && connected{sendCommand(DesktopCommand("restore",messages:selected?.history ?? [],system:currentSystemPrompt,reasoningBudget:settings.responseStyle.budget))}}
     func removeMessage(_ id: UUID){guard !busy,!loading else{return};state.deleteMessage(id);restoreSelected();persist()}
     func saveMemory(_ text:String,source:UUID?=nil){
         let clean=text.trimmingCharacters(in:.whitespacesAndNewlines)
@@ -182,7 +221,10 @@ private final class DesktopPipeReader: @unchecked Sendable {
         do {let next=try WorkspacePersistence.open(id,in:directory);activate(next)} catch{notice="This workspace could not be opened. Its saved data has been preserved."}
     }
     private func rememberWorkspaceFolder(){if !preview,ProcessInfo.processInfo.environment["PARTICLEONE_DATA_PATH"]==nil {UserDefaults.standard.set(directory.path,forKey:"ParticleOne.lastWorkspaceDirectory")}}
-    private func activate(_ next:SavedWorkspace){
+    private func activate(_ saved:SavedWorkspace){
+        var next=saved
+        for index in next.conversations.indices where next.conversations[index].modelID == nil {next.conversations[index].modelID=ModelDescriptor.sarvam.id}
+        for index in next.agentSessions.indices where next.agentSessions[index].modelID == nil {next.agentSessions[index].modelID=ModelDescriptor.sarvam.id}
         code.flushDraft();code.workspaceChanged()
         var previous=state.settings;previous.responseStyle=next.settings.responseStyle;state=next;draft="";search="";inputVerified=nil
         if state.conversations.isEmpty{newConversation()}
@@ -217,17 +259,20 @@ private final class DesktopPipeReader: @unchecked Sendable {
         var updated=settings;updated.activeExperts=count;updateSettings(updated)
     }
     func loadModel() {
-        guard !loading,!connected,worker==nil,!preview else{return}
-        guard settings.context<=ParticleContextPolicy.maximum() else{notice="This Mac supports up to \(ParticleContextPolicy.maximum()) context tokens. Choose a smaller conversation capacity in Settings; your saved messages are retained.";return}
-        guard Self.modelExists(settings.modelPath) else { showSetup=true;return }
+        guard conversationUsesCurrentModel else {notice="This conversation’s model is unavailable. Its transcript remains readable; reinstall its model in Models to continue.";showModelLibrary=true;return}
+        guard !loading,!connected,worker==nil,!preview,!library.converting else{return}
+        guard settings.isValid(for:selectedModelDescriptor) else{notice="These model settings exceed this model’s supported memory or context profile. Choose a smaller capacity in Settings; your saved messages are retained.";return}
+        guard settings.modelID == ModelDescriptor.sarvam.id || library.installed.contains(where:{$0.path==settings.modelPath}) else{notice="The selected model’s library record is unavailable. Re-import it to restore its runtime information. Existing chats and files are preserved.";return}
+        guard Self.modelExists(settings.modelPath) else {if settings.modelID == ModelDescriptor.sarvam.id{showSetup=true}else{showModelLibrary=true;notice="The selected model’s files are unavailable. Reinstall or re-import it to continue."};return }
         let override=ProcessInfo.processInfo.environment["PARTICLEONE_ENGINE_PATH"]
-        let bundled=Bundle.main.bundleURL.appendingPathComponent("Contents/MacOS/ParticleCLI")
-        let sibling=Bundle.main.executableURL?.deletingLastPathComponent().appendingPathComponent("ParticleCLI")
+        let workerName=ArchitectureRegistry.adapter(for:selectedModelDescriptor.architecture).worker
+        let bundled=Bundle.main.bundleURL.appendingPathComponent("Contents/MacOS/"+workerName)
+        let sibling=Bundle.main.executableURL?.deletingLastPathComponent().appendingPathComponent(workerName)
         let engine=override.map{URL(fileURLWithPath:$0)} ?? (FileManager.default.isExecutableFile(atPath:bundled.path) ? bundled : sibling ?? bundled)
         guard FileManager.default.isExecutableFile(atPath:engine.path) else { notice="The model engine is missing. Rebuild or reinstall Particle.";return }
-        unloading=false;rate=nil;contextUsed=0
+        unloading=false;rate=nil;contextUsed=0;workerCapabilities=nil
         let process=Process(),stdin=Pipe(),stdout=Pipe(),stderr=Pipe();let session=UUID();workerSession=session
-        process.executableURL=engine;process.arguments=settings.arguments(systemOverride:state.systemPrompt);process.standardInput=stdin;process.standardOutput=stdout;process.standardError=stderr
+        process.executableURL=engine;process.arguments=settings.arguments(for:selectedModelDescriptor,systemOverride:currentSystemPrompt);process.standardInput=stdin;process.standardOutput=stdout;process.standardError=stderr
         outputReader=DesktopPipeReader { [weak self] data in Task { @MainActor in guard self?.workerSession==session else{return};self?.receive(data) } }
         errorReader=DesktopPipeReader { [weak self] data in Task { @MainActor in guard let self,self.workerSession==session else{return};self.diagnostics.append(String(decoding:data,as:UTF8.self));self.diagnostics=Array(self.diagnostics.suffix(150)) } }
         let reader=outputReader!,logger=errorReader!
@@ -238,7 +283,7 @@ private final class DesktopPipeReader: @unchecked Sendable {
             if code != 0 { self.notice="The model stopped. Another Particle session may already be open, or the model disk may be unavailable. Details are in Settings." }
             self.persist()
         } }
-        do { loading=true;status="Waking up Churo…";notice=nil;try process.run();worker=process;input=stdin.fileHandleForWriting }
+        do { loading=true;status="Waking up \(selectedModelName)…";notice=nil;try process.run();worker=process;input=stdin.fileHandleForWriting }
         catch { loading=false;status="Model offline";notice="The model engine could not start: \(error.localizedDescription)" }
     }
     func sendCommand(_ command: DesktopCommand) {
@@ -247,7 +292,7 @@ private final class DesktopPipeReader: @unchecked Sendable {
     }
     func submit() {
         let text=draft.trimmingCharacters(in:.whitespacesAndNewlines)
-        guard connected,!busy,!loading,!updateRestartPending,!text.isEmpty,let index=state.conversations.firstIndex(where:{$0.id==state.selected}) else{return}
+        guard connected,conversationUsesCurrentModel,!busy,!loading,!updateRestartPending,!text.isEmpty,let index=state.conversations.firstIndex(where:{$0.id==state.selected}) else{return}
         guard text.utf8.count<900_000 else {notice="This message is too large. Try a smaller excerpt.";return}
         if settings.rememberPersonalDetails {
             for fact in PersonalMemory.statements(in:text) {saveMemory(fact)}
@@ -264,12 +309,15 @@ private final class DesktopPipeReader: @unchecked Sendable {
     func unload() {
         guard let process=worker else{return};unloading=true;sendCommand(DesktopCommand("quit"));if busy || loading {process.interrupt()};connected=false;loading=true;status="Unloading model…"
     }
-    func shutdown() { code.cancelForShutdown();expertReloadTask?.cancel();installer.pause();connected=false;loading=true;status="Closing safely…";if busy && !code.active {editReply{$0.finish="cancelled"}};persist();if let process=worker {sendCommand(DesktopCommand("quit"));process.interrupt()} }
-    func shutdownWorker() -> Process? {let process=worker;shutdown();return process}
+    func shutdown() { code.cancelForShutdown();expertReloadTask?.cancel();installer.pause();pauseNativeLibraryInstall();connected=false;loading=true;status="Closing safely…";if busy && !code.active {editReply{$0.finish="cancelled"}};persist();if let process=worker {sendCommand(DesktopCommand("quit"));process.interrupt()} }
+    func shutdownWorker() -> Process? {let process=worker ?? nativeLibraryProcess;shutdown();return process}
     func finishShutdown() async {
-        let process=worker
-        for _ in 0..<80 {if process?.isRunning != true {return};try? await Task.sleep(for:.milliseconds(100))}
-        if process?.isRunning==true {process?.terminate()}
+        let processes=[worker,nativeLibraryProcess].compactMap{$0}
+        // The optimizer first stops its own inference child; allow that cleanup
+        // to finish before terminating its parent or relaunching an update.
+        for _ in 0..<200 {if processes.allSatisfy({!$0.isRunning}) {return};try? await Task.sleep(for:.milliseconds(100))}
+        for process in processes where process.isRunning {process.terminate()}
+        for _ in 0..<50 {if processes.allSatisfy({!$0.isRunning}) {return};try? await Task.sleep(for:.milliseconds(100))}
     }
     private func editReply(_ change: (inout ChatMessage)->Void) {
         guard let conversation=state.conversations.firstIndex(where:{$0.id==state.selected}),let message=state.conversations[conversation].messages.firstIndex(where:{$0.id==currentReply}) else{return}
@@ -279,10 +327,24 @@ private final class DesktopPipeReader: @unchecked Sendable {
         guard let event=try? JSONSerialization.jsonObject(with:data) as? [String:Any],let type=event["event"] as? String else{return}
         if code.handle(event){return}
         switch type {
+        case "capabilities":
+            guard let capabilities = try? JSONDecoder().decode(DesktopCapabilities.self,from:data),capabilities.valid,
+                  capabilities.architecture == selectedModelDescriptor.architecture.rawValue,
+                  capabilities.nativeExperts == selectedModelDescriptor.activeExperts,
+                  capabilities.contextLimit >= settings.context,
+                  !selectedModelDescriptor.supportsTools || capabilities.tools else {
+                notice="The model worker’s capabilities do not match this installation. Reinstall Particle or re-import the model.";unload();return
+            }
+            workerCapabilities = capabilities
         case "ready":
             guard !unloading else{return}
+            guard selectedModelDescriptor.architecture == .sarvam || workerCapabilities != nil else {notice="This model worker did not provide its required capabilities.";unload();return}
             let first = !connected;connected=true;loading=false;if !busy {status="Ready when you are"}
-            if first {sendCommand(DesktopCommand("restore",messages:selected?.history ?? [],system:state.systemPrompt,reasoningBudget:settings.responseStyle.budget));code.modelReady()}
+            if first {
+                if !codeMode && conversationUsesCurrentModel {sendCommand(DesktopCommand("restore",messages:selected?.history ?? [],system:currentSystemPrompt,reasoningBudget:settings.responseStyle.budget))}
+                else {sendCommand(DesktopCommand("reset",system:currentSystemPrompt,reasoningBudget:settings.responseStyle.budget))}
+                code.modelReady()
+            }
         case "input":
             inputVerified=(event["utf8_sha256"] as? String)==expectedInputFingerprint
             if inputVerified==false {notice="The submitted text did not match the worker acknowledgment. Reload the model before continuing."}
@@ -298,7 +360,7 @@ private final class DesktopPipeReader: @unchecked Sendable {
             if let tokens=event["tokens"] as? Int,let forwards=event["decode_steps"] as? Int {
                 metrics=ResponseMetrics(outputTokens:tokens,decodeSteps:forwards,decodeSeconds:seconds,contextTokens:event["context_used"] as? Int,contextLimit:settings.context)
             }else{metrics=nil}
-            editReply {if let text=event["text"] as? String{$0.content=text};$0.complete=(event["finish"] as? String) != "reasoning_limit";$0.finish=event["finish"] as? String;$0.metrics=metrics};persist()
+            editReply {if let text=event["text"] as? String{$0.content=text};$0.complete = !["reasoning_limit","unicode_boundary","cancelled","error"].contains(event["finish"] as? String ?? "");$0.finish=event["finish"] as? String;$0.metrics=metrics};persist()
         case "cancelled":contextUsed=0;editReply{$0.finish="cancelled"};busy=false;status="Stopped";persist()
         case "error":editReply{$0.finish="error"};notice=event["message"] as? String ?? "The model needs attention.";busy=false;persist()
         default:break
@@ -307,7 +369,9 @@ private final class DesktopPipeReader: @unchecked Sendable {
     func exportConversation() {
         guard let chat=selected,!chat.messages.isEmpty else{return};let panel=NSSavePanel();panel.nameFieldStringValue="\(chat.title).md"
         if panel.runModal() == .OK,let url=panel.url {
-            let text="# \(chat.title)\n\n"+chat.messages.filter{$0.finish != "deleted"}.map{"## \($0.role == "user" ? "You" : "Churo Chat")\n\n\($0.content)"}.joined(separator:"\n\n")
+            let modelID=chat.modelID ?? ModelDescriptor.sarvam.id
+            let assistant=modelID == ModelDescriptor.sarvam.id ? "Churo Chat" : (library.installed.first(where:{$0.id == modelID})?.descriptor.name ?? "Assistant")
+            let text="# \(chat.title)\n\n"+chat.messages.filter{$0.finish != "deleted"}.map{"## \($0.role == "user" ? "You" : assistant)\n\n\($0.content)"}.joined(separator:"\n\n")
             do {try text.write(to:url,atomically:true,encoding:.utf8)} catch {notice="The conversation could not be exported."}
         }
     }

@@ -1,13 +1,16 @@
 import Foundation
 import ParticleGGUF
+import CryptoKit
 
 public struct ParticleSessionBenchmarkOptions: Codable, Sendable {
     public var histories: [Int]
     public var suffixes: [Int]
     public var rounds: Int
     public var decodeTokens: Int
-    public init(histories: [Int] = [512,2048,4096,8000], suffixes: [Int] = [1,16,64,128], rounds: Int = 3, decodeTokens: Int = 64) {
+    public var candidateOnly:Bool?
+    public init(histories: [Int] = [512,2048,4096,8000], suffixes: [Int] = [1,16,64,128], rounds: Int = 3, decodeTokens: Int = 64,candidateOnly:Bool = false) {
         self.histories=histories; self.suffixes=suffixes; self.rounds=rounds; self.decodeTokens=decodeTokens
+        self.candidateOnly=candidateOnly
     }
 }
 public struct ParticleSessionBenchmarkPass: Codable, Sendable {
@@ -20,6 +23,11 @@ public struct ParticleSessionBenchmarkPass: Codable, Sendable {
     public let decodeExpertReadBytes: Int, decodeSSDReadBytes: Int
     public let maxLogitDifference: Float, maxContinuationDifference: Float
     public let continuationMatches: Bool, parityPassed: Bool
+    public var logitSHA256: String?
+    public var continuationSHA256: String?
+    public var tokensSHA256: String?
+    public var referenceCompared:Bool?
+    public var executionFinite:Bool?
 }
 extension SarvamRunner {
     /// Extends one real KV lineage to each history length, then rewinds only
@@ -38,13 +46,14 @@ extension SarvamRunner {
         }
         let length=options.histories.max()!+options.suffixes.max()!
         let stream=(0..<length).map { seed[$0%seed.count] }
+        func digest<T>(_ values:[T])->String {values.withUnsafeBytes{SHA256.hash(data:Data($0)).map{String(format:"%02x",$0)}.joined()}}
         var control=candidate
         control.attention = .reference; control.projection = .reference; control.hybrid=false; control.deferredDecode=false; control.gpuRouting=false; control.groupedExperts=false; control.ffnVector=false; control.pipelinedVerification=false; control.cooperativeQuant=false
         control.overlapExpertReads=false; control.coalesceReads=false
         var passes: [ParticleSessionBenchmarkPass]=[], seeded=0
         reset()
         for history in options.histories.sorted() {
-            try configureExecution(control); try rewind(to:seeded)
+            try configureExecution(options.candidateOnly == true ? candidate : control); try rewind(to:seeded)
             let prefixStart=ProcessInfo.processInfo.systemUptime
             if history>seeded {
                 progress?("Extending real history from \(seeded) to \(history) tokens")
@@ -55,7 +64,7 @@ extension SarvamRunner {
             for suffix in options.suffixes {
                 var baseline: [Float]=[], baselineEnd: [Float]=[], baselineTokens: [Int]=[]
                 for round in 0..<options.rounds {
-                    for isCandidate in (round%2==0 ? [false,true] : [true,false]) {
+                    for isCandidate in (options.candidateOnly == true ? [true] : (round%2==0 ? [false,true] : [true,false])) {
                         let mode=isCandidate ? "candidate" : "reference"
                         progress?("\(mode), history \(history), suffix \(suffix), round \(round+1)")
                         try configureExecution(isCandidate ? candidate : control); try rewind(to:history)
@@ -72,6 +81,8 @@ extension SarvamRunner {
                         let difference=zip(logits,baseline).reduce(Float(0)) { max($0,abs($1.0-$1.1)) }
                         let finalDifference=zip(final,baselineEnd).reduce(Float(0)) { max($0,abs($1.0-$1.1)) }
                         let matching=generated==baselineTokens
+                        let finite=logits.allSatisfy(\.isFinite) && final.allSatisfy(\.isFinite),compared=options.candidateOnly != true
+                        guard finite else {throw ParticleError.invalid("Non-finite calibration logits")}
                         passes.append(ParticleSessionBenchmarkPass(mode:mode,round:round+1,history:history,suffix:suffix,decodeSteps:generated.count,
                             prefixExtensionSeconds:prefixSeconds,prefillSeconds:prefilled-start,decodeSeconds:done-prefilled,
                             sourceBytes:after.sourceReadBytes-before.sourceReadBytes,ssdReadBytes:after.ssdReadBytes-before.ssdReadBytes,
@@ -82,8 +93,9 @@ extension SarvamRunner {
                             decodeGPUWaitSeconds:after.gpuWaitSeconds-afterPrefill.gpuWaitSeconds,
                             decodeExpertReadBytes:after.expertReadBytes-afterPrefill.expertReadBytes,
                             decodeSSDReadBytes:after.ssdReadBytes-afterPrefill.ssdReadBytes,
-                            maxLogitDifference:difference,maxContinuationDifference:finalDifference,continuationMatches:matching,
-                            parityPassed:matching && difference<=0.0002 && finalDifference<=0.0002))
+                            maxLogitDifference:difference,maxContinuationDifference:finalDifference,continuationMatches:compared && matching,
+                            parityPassed:compared && matching && difference<=0.0002 && finalDifference<=0.0002,
+                            logitSHA256:digest(logits),continuationSHA256:digest(final),tokensSHA256:digest(generated.map(Int32.init)),referenceCompared:compared,executionFinite:finite))
                     }
                 }
             }
