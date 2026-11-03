@@ -12,7 +12,7 @@ import Testing
         let storage = NSMutableAttributedString()
         var planner = TranscriptSyncPlanner()
         let prefix = NSAttributedString(string: "[saved image]\n")
-        func update(_ epoch: UUID, first: Bool, newRun: Bool) {
+        @MainActor func update(_ epoch: UUID, first: Bool, newRun: Bool) {
             controller.synchronizeHistory(storage: storage, planner: &planner,
                 input: .init(epoch: epoch, historyCount: 1, contextBreak: nil,
                              startedNewRun: newRun, firstSynchronize: first)) { _ in
