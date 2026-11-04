@@ -21,7 +21,7 @@ import Testing
     @Test func remoteModelIDsCannotBecomeFilesystemPaths() throws {
         let raw=try JSONEncoder().encode(ModelDescriptor.sarvam)
         var object=try #require(JSONSerialization.jsonObject(with:raw) as? [String:Any])
-        for id in ["../outside","a/b","a\\b","x\nother","%2foutside", ""] {
+        for id in ["../outside","a/b","a\\b","x\nother","%2foutside", "trailing\n", ""] {
             object["id"]=id
             let descriptor=try JSONDecoder().decode(ModelDescriptor.self,from:JSONSerialization.data(withJSONObject:object))
             #expect(throws:(any Error).self){try descriptor.validate()}
