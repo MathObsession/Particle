@@ -52,9 +52,9 @@ public struct ModelDescriptor: Codable, Equatable, Identifiable, Sendable {
         SHA256.hash(data: Data((repository+"\n"+revision+"\n"+artifact).utf8)).map { String(format: "%02x", $0) }.joined()
     }
     public func validate() throws {
-        guard !id.isEmpty, id.utf8.count <= 256, !name.isEmpty, name.utf8.count <= 512,
+        guard id.range(of:"^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$",options:.regularExpression) != nil, !name.isEmpty, name.utf8.count <= 512,
               (1...512).contains(layers), (2...4096).contains(experts), (1...experts).contains(activeExperts),
-              (128...4_194_304).contains(contextLimit), sourceBytes >= 0, kvBytesPerToken > 0 else {
+              (128...4_194_304).contains(contextLimit), sourceBytes >= 0,sourceBytes <= Int64.max-2_147_483_648, kvBytesPerToken > 0 else {
             throw ModelLibraryError.invalid("Invalid model dimensions or identity.")
         }
         if let repo = provenance.repository { try HubRepository.validate(repo) }

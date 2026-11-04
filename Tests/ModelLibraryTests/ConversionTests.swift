@@ -84,6 +84,31 @@ private struct GeneratedSource: ModelByteSource {
         try ParticleV2Reader(path:output).verifyAll()
         #expect(!FileManager.default.fileExists(atPath:partial.path))
     }
+    @Test func nativeDownloadPreservesOriginalManifestAndPayloads() async throws {
+        let root=FileManager.default.temporaryDirectory.appendingPathComponent("particle-native-copy-tests-"+UUID().uuidString)
+        try FileManager.default.createDirectory(at:root,withIntermediateDirectories:true);defer{try? FileManager.default.removeItem(at:root)}
+        let original=root.appendingPathComponent("original.particle"),copy=root.appendingPathComponent("copy.particle")
+        let generated=GeneratedSource(length:256,failAt:nil)
+        try await MLXPackConverter.convert(source:generated,plan:plan(generated),output:original,resume:false)
+        let raw=try Data(contentsOf:original.appendingPathComponent("manifest.json"))
+        let manifest=try JSONDecoder().decode(ParticleV2Manifest.self,from:raw)
+        let source=try LocalModelByteSource(root:original,paths:Array(manifest.files.keys)+["manifest.json"])
+        let layout=try NativePackDownload.copyPlan(manifest,sourceFiles:source.files)
+        try await MLXPackConverter.convert(source:source,plan:layout,output:copy,resume:false,nativeManifest:raw)
+        #expect(try Data(contentsOf:copy.appendingPathComponent("manifest.json")) == raw)
+        try ParticleV2Reader(path:copy).verifyAll()
+        for name in manifest.files.keys {#expect(try Data(contentsOf:original.appendingPathComponent(name)) == Data(contentsOf:copy.appendingPathComponent(name)))}
+        // Completed downloads are verified no-ops, never repacked checkpoints.
+        try await MLXPackConverter.convert(source:source,plan:layout,output:copy,resume:true,nativeManifest:raw)
+        #expect(try Data(contentsOf:copy.appendingPathComponent("manifest.json")) == raw)
+        var wrongInventory=source.files;wrongInventory.removeAll{$0.path == "common.bin"}
+        #expect(throws:(any Error).self){try NativePackDownload.copyPlan(manifest,sourceFiles:wrongInventory)}
+        let bad=manifest.files.map{HubFile(path:$0.key,bytes:$0.value.bytes,sha256:String(repeating:"0",count:64))}
+        #expect(throws:(any Error).self){try NativePackDownload.copyPlan(manifest,sourceFiles:bad)}
+        let handle=try FileHandle(forWritingTo:copy.appendingPathComponent("common.bin"));try handle.write(contentsOf:Data([255]));try handle.close()
+        await #expect(throws:(any Error).self){try await MLXPackConverter.convert(source:source,plan:layout,output:copy,resume:true,nativeManifest:raw)}
+        #expect(try Data(contentsOf:original.appendingPathComponent("manifest.json")) == raw)
+    }
     @Test func existingConversationsDecodeWithoutModelBindings() throws {
         var workspace = SavedWorkspace();var conversation = Conversation();conversation.messages = [.init(role:"user",content:"Keep me")]
         workspace.conversations = [conversation]
@@ -99,6 +124,9 @@ private struct GeneratedSource: ModelByteSource {
         let valid=ParticleV2Manifest(model:layout.model,files:files,tensors:layout.tensors,
             sourceFiles:["checkpoint.bin":.init(bytes:256,sha256:digest)],expertHashes:["experts/layer_000.bin":[digest,digest]])
         try valid.validate()
+        var hugeFiles=files;hugeFiles["oversized.bin"] = .init(bytes:Int64.max,sha256:digest)
+        let oversized=ParticleV2Manifest(model:layout.model,files:hugeFiles,tensors:layout.tensors,sourceFiles:valid.sourceFiles,expertHashes:valid.expertHashes)
+        #expect(throws:(any Error).self){try oversized.validate()}
         let overlap=ParticleV2Tensor(name:"overlap",dtype:"F32",shape:[2],file:"common.bin",offset:4,bytes:8)
         let bad=ParticleV2Manifest(model:layout.model,files:files,tensors:layout.tensors+[overlap],sourceFiles:valid.sourceFiles,expertHashes:valid.expertHashes)
         #expect(throws:(any Error).self){try bad.validate()}

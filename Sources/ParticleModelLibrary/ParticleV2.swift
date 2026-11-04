@@ -37,13 +37,21 @@ public struct ParticleV2Manifest: Codable, Equatable, Sendable {
     }
     public func validate() throws {
         try model.validate()
-        guard magic == ParticleFormat.magic, versionMajor == 2, model.architecture == .qwen35MoE,
+        guard magic == ParticleFormat.magic, versionMajor == 2, model.architecture == .qwen35MoE,model.id != ModelDescriptor.sarvam.id,
               !files.isEmpty, files.count <= 512, !sourceFiles.isEmpty, sourceFiles.count <= 512,
               !tensors.isEmpty, tensors.count <= 100_000, Set(tensors.map(\.name)).count == tensors.count else {
             throw ModelLibraryError.invalid("Unsupported or incomplete Particle v2 manifest.")
         }
         for required in ["config.json", "tokenizer/tokenizer.json", "tokenizer/tokenizer_config.json", "tokenizer/chat_template.jinja", "common.bin"] {
             guard files[required] != nil else { throw ModelLibraryError.invalid("Pack file is missing: \(required).") }
+        }
+        for records in [files,sourceFiles] {
+            var total:Int64=0
+            for file in records.values {
+                let (next,overflow)=total.addingReportingOverflow(file.bytes)
+                guard file.bytes >= 0,!overflow,next <= Int64.max-2_147_483_648 else {throw ModelLibraryError.invalid("Pack size exceeds supported disk accounting.")}
+                total=next
+            }
         }
         for (path, file) in files.merging(sourceFiles, uniquingKeysWith: { a, _ in a }) {
             try ParticleFormat.validatePath(path)

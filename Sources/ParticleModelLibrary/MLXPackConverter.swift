@@ -120,8 +120,14 @@ public enum MLXPackConverter {
     }
 
     /// Full-source sequential verification, bounded scatter writes and durable resumability.
-    public static func convert(source: any ModelByteSource, plan: MLXPackPlan, output: URL, resume: Bool,
+    public static func convert(source: any ModelByteSource, plan: MLXPackPlan, output: URL, resume: Bool, nativeManifest:Data? = nil,
                                progress: @Sendable (Int64,Int64,String) -> Void = {_,_,_ in}) async throws {
+        let existingManifest=try nativeManifest.map{try JSONDecoder().decode(ParticleV2Manifest.self,from:$0)}
+        if let existingManifest {
+            try existingManifest.validate()
+            guard existingManifest.model == plan.model,existingManifest.tensors == plan.tensors,
+                  existingManifest.files.mapValues(\.bytes) == plan.payloadSizes else {throw ModelLibraryError.invalid("The native download layout changed.")}
+        }
         let lease = try ModelOperationLease();defer{withExtendedLifetime(lease){}}
         let memoryPressure = ModelMemoryPressure()
         try source.verifyIdentity()
@@ -131,7 +137,10 @@ public enum MLXPackConverter {
             guard resume else {throw ModelLibraryError.invalid("Choose a new .particle destination.")}
             let reader = try ParticleV2Reader(path:output)
             guard reader.manifest.model == plan.model,reader.manifest.tensors == plan.tensors,
-                  Set(reader.manifest.sourceFiles.keys) == Set(plan.sourceFiles.map(\.path)) else {throw ModelLibraryError.invalid("The existing model is a different conversion. Choose a new destination.")}
+                  (existingManifest.map{$0 == reader.manifest} ?? (Set(reader.manifest.sourceFiles.keys) == Set(plan.sourceFiles.map(\.path)))) else {throw ModelLibraryError.invalid("The existing model is a different conversion. Choose a new destination.")}
+            if let nativeManifest {
+                guard try ArchitectureRegistry.boundedData(output.appendingPathComponent("manifest.json"),limit:16*1024*1024) == nativeManifest else {throw ModelLibraryError.invalid("The completed destination has a different native manifest.")}
+            }
             try reader.verifyAll();try source.verifyIdentity()
             progress(plan.model.sourceBytes,plan.model.sourceBytes,"Verified existing completed installation")
             return
@@ -150,7 +159,7 @@ public enum MLXPackConverter {
         let lock = openat(root,"pack.lock",O_RDWR|O_CREAT|O_NOFOLLOW|O_CLOEXEC,0o600)
         guard lock >= 0 else { throw ModelLibraryError.invalid("Cannot open conversion lease.") }; defer {close(lock)}
         guard flock(lock,LOCK_EX|LOCK_NB) == 0 else { throw ModelLibraryError.invalid("This model is already being converted.") }; defer {flock(lock,LOCK_UN)}
-        let planHash = hash(try ParticleFormat.encode(plan)), checkpointURL = partial.appendingPathComponent("install-progress.json")
+        let planHash = hash(try ParticleFormat.encode(plan)+(nativeManifest ?? Data())), checkpointURL = partial.appendingPathComponent("install-progress.json")
         var checkpoint = MLXCopyCheckpoint(identity:source.identity,planSHA256:planHash,chunks:[])
         if existed {
             checkpoint = try JSONDecoder().decode(MLXCopyCheckpoint.self,from:ArchitectureRegistry.boundedData(checkpointURL,limit:16*1024*1024))
@@ -260,7 +269,11 @@ public enum MLXPackConverter {
         try source.verifyIdentity()
         let manifest = ParticleV2Manifest(model:plan.model,files:files,tensors:plan.tensors,sourceFiles:verifiedSources,expertHashes:expertHashes)
         try manifest.validate()
-        let data = try ParticleFormat.encode(manifest)
+        let data:Data
+        if let existingManifest,let nativeManifest {
+            guard existingManifest.files == files,existingManifest.expertHashes == expertHashes else {throw ModelLibraryError.checksum("Native pack payload or expert hashes")}
+            data=nativeManifest
+        } else {data=try ParticleFormat.encode(manifest)}
         try data.write(to:partial.appendingPathComponent("manifest.json"),options:.atomic)
         try ParticleFormat.encode(ParticleInstallReceipt(manifestSHA256:hash(data))).write(to:partial.appendingPathComponent("verified-install.json"),options:.atomic)
         for name in ["manifest.json","verified-install.json"] {let fd = try ParticleIO.openRelative(root:root,path:name);defer{close(fd)};guard fsync(fd) == 0 else {throw ModelLibraryError.invalid("Cannot finalize model receipt.")}}

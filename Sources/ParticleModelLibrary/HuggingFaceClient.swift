@@ -97,6 +97,9 @@ public actor HuggingFaceClient {
     }
     public func inspect(_ card: HubModelCard) async throws -> CompatibilityReport {
         guard !card.gated else { return .unsupported("Only public, ungated models are available in this release.") }
+        if card.files.contains(where:{$0.path == "manifest.json"}) {
+            return try await NativePackDownload.plan(source:RemoteModelByteSource(card:card,http:http)).report
+        }
         guard card.files.contains(where: {$0.path == "config.json"}), card.files.contains(where: {$0.path == "model.safetensors.index.json"}) else {
             return .unsupported("This repository needs an indexed, supported MLX checkpoint or a verified Particle release.")
         }

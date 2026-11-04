@@ -61,8 +61,10 @@ extension WorkspaceModel {
             arguments=[verifyingOriginal ? "verify" : "convert","--source",localSource.path,"--expected-source-id",descriptor.id]
             if !verifyingOriginal {arguments += ["--output",destination.path,"--resume"]}
         } else {
-            guard let repository=descriptor.provenance.repository,let revision=descriptor.provenance.revision else{return}
-            arguments=["convert","--repo",repository,"--revision",revision,"--output",destination.path,"--resume"]
+            // The downloaded pack may be hosted by a mirror. Its original
+            // training/checkpoint provenance is distinct from this transfer.
+            guard let job=library.jobs.first(where:{$0.id == jobID}),HubRepository.validRevision(job.revision) else{return}
+            arguments=["convert","--repo",job.repository,"--revision",job.revision,"--output",destination.path,"--resume"]
         }
         libraryInstallJob = jobID;nativeLibraryIntent = nil
         library.updateJob(jobID,stage:.queued,progress:library.jobs.first(where:{$0.id == jobID}).map{Double($0.completedBytes)/Double(max(1,$0.totalBytes))} ?? 0,detail:"Waiting for the current model to become idle")

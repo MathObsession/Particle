@@ -18,6 +18,17 @@ import Testing
         return try ArchitectureRegistry.inspectMLX(configuration:JSONSerialization.data(withJSONObject:configuration),tensors:records,template:fixture.template,
             repository:"Lifeboat78/Chronos-Ornith-1.5-35B-A3B-MLX-3bit",revision:"a982bb2ed776bf0db64375de480a1d0a00475a99",sourceBytes:15_179_224_487,license:"mit")
     }
+    @Test func remoteModelIDsCannotBecomeFilesystemPaths() throws {
+        let raw=try JSONEncoder().encode(ModelDescriptor.sarvam)
+        var object=try #require(JSONSerialization.jsonObject(with:raw) as? [String:Any])
+        for id in ["../outside","a/b","a\\b","x\nother","%2foutside", ""] {
+            object["id"]=id
+            let descriptor=try JSONDecoder().decode(ModelDescriptor.self,from:JSONSerialization.data(withJSONObject:object))
+            #expect(throws:(any Error).self){try descriptor.validate()}
+        }
+        try ModelDescriptor.sarvam.validate()
+    }
+
     @Test func preservesMixedQuantizationWithoutQualifyingRuntime() throws {
         let report = try inspect(),model = try #require(report.descriptor)
         #expect(report.conversionSupported)

@@ -55,16 +55,11 @@ public enum ArchitectureRegistry {
             }
             let reader = try ParticleV2Reader(path:url)
             let manifest = reader.manifest
-            try validateChronosLayout(manifest)
-            try validateChronosTokenizer(tokenizer:boundedData(url.appendingPathComponent("tokenizer/tokenizer.json"),limit:64*1024*1024),configuration:boundedData(url.appendingPathComponent("tokenizer/tokenizer_config.json"),limit:1_048_576))
-            let records = Dictionary(uniqueKeysWithValues:manifest.tensors.map{($0.name,SafetensorRecord(name:$0.name,dtype:$0.dtype,shape:$0.shape,offset:0,bytes:$0.bytes))})
-            let checked = try inspectMLX(configuration:boundedData(url.appendingPathComponent("config.json"),limit:1_048_576),tensors:records,
-                template:String(decoding:boundedData(url.appendingPathComponent("tokenizer/chat_template.jinja"),limit:262_144),as:UTF8.self),repository:manifest.model.provenance.repository,revision:manifest.model.provenance.revision,sourceBytes:manifest.model.sourceBytes,license:manifest.model.provenance.license)
-            guard checked.conversionSupported,let expected = checked.descriptor,expected.architecture == manifest.model.architecture,
-                  expected.layers == manifest.model.layers,expected.experts == manifest.model.experts,expected.activeExperts == manifest.model.activeExperts,
-                  expected.quantization == manifest.model.quantization,expected.contextLimit == manifest.model.contextLimit,
-                  expected.kvBytesPerToken == manifest.model.kvBytesPerToken,!manifest.model.supportsTools else {return .unsupported("The pack descriptor does not match its configuration and tensor graph.")}
-            return report(manifest.model)
+            return try inspectV2Metadata(manifest,
+                configuration:boundedData(url.appendingPathComponent("config.json"),limit:1_048_576),
+                tokenizer:boundedData(url.appendingPathComponent("tokenizer/tokenizer.json"),limit:64*1024*1024),
+                tokenizerConfiguration:boundedData(url.appendingPathComponent("tokenizer/tokenizer_config.json"),limit:1_048_576),
+                template:boundedData(url.appendingPathComponent("tokenizer/chat_template.jinja"),limit:262_144))
         }
         let config = try boundedData(url.appendingPathComponent("config.json"), limit: 1_048_576)
         let index = try boundedData(url.appendingPathComponent("model.safetensors.index.json"), limit: 16*1024*1024)
@@ -94,6 +89,25 @@ public enum ArchitectureRegistry {
         let source = try LocalModelByteSource(root:url,paths:Array(Set(map.values))+extras)
         return try inspectMLX(configuration: config, tensors: tensors, template: template,
                               repository: nil, revision: nil, sourceBytes: bytes, sourceIdentity:source.identity)
+    }
+
+    public static func inspectV2Metadata(_ manifest:ParticleV2Manifest,configuration:Data,tokenizer:Data,tokenizerConfiguration:Data,template:Data) throws -> CompatibilityReport {
+        try manifest.validate();try validateChronosLayout(manifest)
+        try validateChronosTokenizer(tokenizer:tokenizer,configuration:tokenizerConfiguration)
+        let records=Dictionary(uniqueKeysWithValues:manifest.tensors.map{($0.name,SafetensorRecord(name:$0.name,dtype:$0.dtype,shape:$0.shape,offset:0,bytes:$0.bytes))})
+        let checked=try inspectMLX(configuration:configuration,tensors:records,template:String(decoding:template,as:UTF8.self),
+            repository:manifest.model.provenance.repository,revision:manifest.model.provenance.revision,
+            sourceBytes:manifest.model.sourceBytes,license:manifest.model.provenance.license)
+        guard checked.conversionSupported,let expected=checked.descriptor,
+              expected.architecture == manifest.model.architecture,expected.layers == manifest.model.layers,
+              expected.experts == manifest.model.experts,expected.activeExperts == manifest.model.activeExperts,
+              expected.quantization == manifest.model.quantization,expected.contextLimit == manifest.model.contextLimit,
+              expected.kvBytesPerToken == manifest.model.kvBytesPerToken,!manifest.model.supportsTools,
+              manifest.model.id != ModelDescriptor.sarvam.id,
+              manifest.model.provenance.repository == nil || expected.id == manifest.model.id else {
+            return .unsupported("The pack descriptor does not match its configuration and tensor graph.")
+        }
+        return report(manifest.model)
     }
 
     public static func validateChronosLayout(_ manifest:ParticleV2Manifest) throws {

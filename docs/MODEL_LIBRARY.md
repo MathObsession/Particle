@@ -53,7 +53,11 @@ retained.
 
 Local imports preserve originals. GGUF imports use the native packer and
 prepare Sarvam's checksum-pinned public tokenizer when needed. Indexed MLX
-folders use the v2 converter. Existing packs are fully verified in place.
+folders use the v2 converter. Existing local packs are fully verified in place. Public repositories with a root v2
+`manifest.json` download the native pack directly, preserving the exact manifest,
+original provenance and quantized payload bytes; they are not reconverted.
+The transfer remains pinned to the hosting repository revision, including when
+that repository is a mirror of the original checkpoint.
 App-managed removals retain conversations, memories and user-owned sources.
 Imported entries can also be removed from the library while preserving their
 original files.
