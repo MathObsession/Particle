@@ -73,6 +73,23 @@ public struct ParticleV2Manifest: Codable, Equatable, Sendable {
             } else if tensor.expertStride != nil { throw ModelLibraryError.invalid("Resident tensor has an expert stride.") }
         }
         let expertFiles = Set(tensors.filter {$0.layer != nil}.map(\.file))
+        let layers=Dictionary(grouping:tensors.filter{$0.layer != nil},by:{$0.layer!})
+        guard layers.count == model.layers,expertFiles.count == model.layers,
+              Set(tensors.filter{$0.layer == nil}.map(\.file)).isDisjoint(with:expertFiles) else {
+            throw ModelLibraryError.invalid("Resident and routed tensor ownership is inconsistent.")
+        }
+        for records in layers.values {
+            guard Set(records.map(\.file)).count == 1,Set(records.compactMap(\.expertStride)).count == 1 else {
+                throw ModelLibraryError.invalid("Each layer must have one expert file and stride.")
+            }
+        }
+        for records in Dictionary(grouping:tensors,by:\.file).values {
+            var end:Int64=0
+            for tensor in records.sorted(by:{$0.offset < $1.offset}) {
+                guard tensor.offset >= end else {throw ModelLibraryError.invalid("Overlapping tensor payload ranges.")}
+                end=tensor.offset+tensor.bytes
+            }
+        }
         guard Set(expertHashes.keys) == expertFiles,expertHashes.values.allSatisfy({$0.count == model.experts && $0.allSatisfy(ParticleFormat.digestIsValid)}) else {
             throw ModelLibraryError.invalid("Missing per-expert verification hashes.")
         }

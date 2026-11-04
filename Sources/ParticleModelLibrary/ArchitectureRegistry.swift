@@ -55,6 +55,7 @@ public enum ArchitectureRegistry {
             }
             let reader = try ParticleV2Reader(path:url)
             let manifest = reader.manifest
+            try validateChronosLayout(manifest)
             try validateChronosTokenizer(tokenizer:boundedData(url.appendingPathComponent("tokenizer/tokenizer.json"),limit:64*1024*1024),configuration:boundedData(url.appendingPathComponent("tokenizer/tokenizer_config.json"),limit:1_048_576))
             let records = Dictionary(uniqueKeysWithValues:manifest.tensors.map{($0.name,SafetensorRecord(name:$0.name,dtype:$0.dtype,shape:$0.shape,offset:0,bytes:$0.bytes))})
             let checked = try inspectMLX(configuration:boundedData(url.appendingPathComponent("config.json"),limit:1_048_576),tensors:records,
@@ -95,16 +96,25 @@ public enum ArchitectureRegistry {
                               repository: nil, revision: nil, sourceBytes: bytes, sourceIdentity:source.identity)
     }
 
-    public static func inspectMLX(configuration: Data, tensors: [String: SafetensorRecord], template: String,
-                                  repository: String?, revision: String?, sourceBytes: Int64, license: String? = nil, sourceIdentity: String? = nil) throws -> CompatibilityReport {
+    public static func validateChronosLayout(_ manifest:ParticleV2Manifest) throws {
+        for tensor in manifest.tensors {
+            let parts=tensor.name.split(separator:".")
+            let routed=parts.count >= 8 && parts[0] == "language_model" && parts[1] == "model" && parts[2] == "layers" && parts[4] == "mlp" && parts[5] == "switch_mlp"
+            let expected=routed ? Int(parts[3]) : nil
+            guard tensor.layer == expected else {throw ModelLibraryError.invalid("Tensor layer ownership does not match its model name: \(tensor.name).")}
+        }
+    }
+
+    /// Early rejection only. A supported configuration must still pass tensor,
+    /// tokenizer/template and runtime qualification before it becomes installable.
+    public static func configurationIncompatibility(_ configuration:Data) throws -> String? {
         guard let root = try JSONSerialization.jsonObject(with: configuration) as? [String: Any],
               let text = root["text_config"] as? [String: Any], root["model_type"] as? String == "qwen3_5_moe" else {
-            return .unsupported("This model family is not supported by a Particle streaming adapter.")
+            return "This model family is not supported by a Particle streaming adapter."
         }
         guard root["vision_config"] == nil || root["vision_config"] is NSNull,
-              !tensors.keys.contains(where: { $0.contains("visual.") || $0.contains("vision_tower") }),
               root["auto_map"] == nil, text["auto_map"] == nil else {
-            return .unsupported("This release supports text-only checkpoints without custom repository code.")
+            return "This release supports text-only checkpoints without custom repository code."
         }
         let expected = ["hidden_size":2048,"num_hidden_layers":40,"num_experts":256,"num_experts_per_tok":8,
                         "moe_intermediate_size":512,"shared_expert_intermediate_size":512,
@@ -112,7 +122,7 @@ public enum ArchitectureRegistry {
                         "linear_conv_kernel_dim":4,"linear_key_head_dim":128,"linear_num_key_heads":16,
                         "linear_num_value_heads":32,"linear_value_head_dim":128,"vocab_size":248320]
         for (key, value) in expected where (text[key] as? Int) != value {
-            return .unsupported("Unsupported Qwen3.5 MoE configuration: \(key). This adapter targets the Chronos 35B-A3B layout.")
+            return "Unsupported Qwen3.5 MoE configuration: \(key). This adapter targets the Chronos 35B-A3B layout."
         }
         let layerTypes = (0..<40).map{($0+1).isMultiple(of:4) ? "full_attention" : "linear_attention"}
         guard text["layer_types"] as? [String] == layerTypes,text["attention_bias"] as? Bool == false,
@@ -122,13 +132,23 @@ public enum ArchitectureRegistry {
               let rope = text["rope_parameters"] as? [String:Any],rope["rope_theta"] as? Double == 10_000_000,
               rope["partial_rotary_factor"] as? Double == 0.25,rope["mrope_section"] as? [Int] == [11,11,10],
               rope["mrope_interleaved"] as? Bool == true,rope["type"] as? String == "default" else {
-            return .unsupported("Unsupported attention, recurrent-layer schedule, normalization or positional encoding.")
+            return "Unsupported attention, recurrent-layer schedule, normalization or positional encoding."
         }
         guard let quant = (root["quantization"] ?? root["quantization_config"]) as? [String: Any],
               quant["bits"] as? Int == 3, quant["group_size"] as? Int == 64,
               (quant["mode"] as? String ?? "affine") == "affine" else {
-            return .unsupported("This adapter requires MLX affine 3-bit weights with group size 64.")
+            return "This adapter requires MLX affine 3-bit weights with group size 64."
         }
+        return nil
+    }
+
+    public static func inspectMLX(configuration: Data, tensors: [String: SafetensorRecord], template: String,
+                                  repository: String?, revision: String?, sourceBytes: Int64, license: String? = nil, sourceIdentity: String? = nil) throws -> CompatibilityReport {
+        if let reason=try configurationIncompatibility(configuration) {return .unsupported(reason)}
+        guard let root=try JSONSerialization.jsonObject(with:configuration) as? [String:Any],
+              let text=root["text_config"] as? [String:Any],
+              let quant=(root["quantization"] ?? root["quantization_config"]) as? [String:Any] else {return .unsupported("Incomplete model configuration.")}
+        guard !tensors.keys.contains(where:{$0.contains("visual.") || $0.contains("vision_tower")}) else {return .unsupported("This release supports text-only checkpoints.")}
         var overrides = [String: Int]()
         guard tensors.count == 1757 else {return .unsupported("This checkpoint contains missing or additional tensors outside the supported text graph.")}
         func raw(_ name:String,_ shape:[Int]) -> Bool {

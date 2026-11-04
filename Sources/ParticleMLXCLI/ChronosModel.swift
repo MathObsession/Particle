@@ -272,12 +272,14 @@ private final class StreamedMoE: Module, UnaryLayer {
     private(set) var tokens = [Int]()
     private(set) var currentLogits: MLXArray?
     private var checkpointLogits: MLXArray?
+    private var evaluations=0
     var expertReadBytes: Int64 {store.readBytes}
     var expertHits: Int {store.hits}
     init(path: URL, slots: Int, activeExperts: Int, readWorkers: Int = 2, cancellation: ParticleCancellation? = nil) throws {
         guard (8...32).contains(slots),(2...8).contains(activeExperts),[1,2,4].contains(readWorkers) else {throw ModelLibraryError.invalid("Invalid Chronos cache, expert count or read-worker setting.")}
         reader = try ParticleV2Reader(path:path)
         guard reader.manifest.model.architecture == .qwen35MoE else {throw ModelLibraryError.incompatible("This worker requires a Qwen3.5 MoE pack.")}
+        try ArchitectureRegistry.validateChronosLayout(reader.manifest)
         try reader.verifyResidentFiles()
         try ArchitectureRegistry.validateChronosTokenizer(tokenizer:ArchitectureRegistry.boundedData(path.appendingPathComponent("tokenizer/tokenizer.json"),limit:64*1024*1024),configuration:ArchitectureRegistry.boundedData(path.appendingPathComponent("tokenizer/tokenizer_config.json"),limit:1_048_576))
         let config = try ArchitectureRegistry.boundedData(path.appendingPathComponent("config.json"),limit:1_048_576)
@@ -361,11 +363,18 @@ private final class StreamedMoE: Module, UnaryLayer {
     }
     func evaluate(_ input: [Int]) throws -> MLXArray {
         guard !input.isEmpty,input.count <= 128 else {throw ModelLibraryError.invalid("Invalid prompt chunk size.")}
-        let output = model(MLXArray(input.map(Int32.init)).expandedDimensions(axis:0),cache:cache)
-        eval(output)
-        if let error = store.failure {throw error}
-        tokens += input
-        currentLogits = output[0,-1]
-        return currentLogits!
+        return try autoreleasepool {
+            let output=model(MLXArray(input.map(Int32.init)).expandedDimensions(axis:0),cache:cache)
+            let last=output[0,-1]
+            // Match upstream TokenIterator: settle functional cache updates as
+            // well as logits, so old activation graphs cannot stay reachable.
+            // Reference module constructors also advance otherwise-unused lazy
+            // random keys; evaluate the key without changing its sequence.
+            eval([last]+cache.flatMap{$0.state}+MLXRandom.globalState.innerState())
+            if let error=store.failure {throw error}
+            tokens += input;currentLogits=last;evaluations += 1
+            if evaluations.isMultiple(of:256) {Memory.clearCache()}
+            return last
+        }
     }
 }

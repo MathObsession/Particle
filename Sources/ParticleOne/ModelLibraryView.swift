@@ -41,7 +41,7 @@ struct ModelLibraryView: View {
             .alert("Remove this model?",isPresented:Binding(get:{removal != nil},set:{if !$0{removal = nil}})) {
                 Button("Cancel",role:.cancel){removal = nil}
                 Button("Remove model",role:.destructive){if let value = removal {library.remove(value)};removal = nil}
-            } message:{Text("Only Particle’s managed model files are removed. Saved conversations and memories remain on this Mac.")}
+            } message:{Text(removal?.managed == false ? "Remove this entry from the library. Your original model files, conversations and memories are preserved." : "Only Particle’s managed model files are removed. Saved conversations and memories remain on this Mac.")}
             .onDisappear{library.cancelDiscovery()}
             .onAppear{if !model.preview{library.discover()}}
     }
@@ -93,7 +93,7 @@ struct ModelLibraryView: View {
                             Button("Install"){model.installLibraryModel(listing);tab = "Downloads"}.buttonStyle(WashedButtonStyle(compact:true)).disabled(model.modelInstallationActive || !listing.report.installable)
                         }
                     }
-                    if let readme = listing.readme,!readme.isEmpty {DisclosureGroup("About this model"){Text(.init(readme)).font(Design.body(11)).textSelection(.enabled).padding(.top,10)}.font(Design.body(10)).padding(.top,12)}
+                    if let readme = listing.readme,!readme.isEmpty {DisclosureGroup("About this model"){MarkdownContent(source:readme,compact:true).padding(.top,10)}.font(Design.body(10)).padding(.top,12)}
                 }
     }
     private var installed: some View {
@@ -110,7 +110,8 @@ struct ModelLibraryView: View {
                             Button("Optimize for this Mac"){model.optimizeLibraryModel(value)}.buttonStyle(HitButtonStyle()).disabled(model.busy || model.loading || model.modelInstallationActive || !ArchitectureRegistry.report(value.descriptor).installable)
                             Button("Show in Finder"){NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath:value.path)])}.buttonStyle(HitButtonStyle())
                             Spacer()
-                            if value.managed {Button("Remove…",role:.destructive){removal = value}.buttonStyle(HitButtonStyle()).disabled(model.busy || model.loading || model.settings.modelPath == value.path)}
+                            if model.connected && model.settings.modelPath == value.path {Button("Unload"){model.unload()}.buttonStyle(HitButtonStyle()).disabled(model.busy || model.loading)}
+                            Button(value.managed ? "Remove…" : "Remove from library…",role:.destructive){removal = value}.buttonStyle(HitButtonStyle()).disabled(model.busy || model.loading || model.modelInstallationActive || (model.connected && model.settings.modelPath == value.path))
                         }.font(Design.body(10))
                         if let report=value.calibration {Text("Last optimized \(report.createdAt.formatted(date:.abbreviated,time:.omitted)). Forced-continuation tests; results apply to this engine, Mac and model location.").font(Design.body(9)).foregroundStyle(Design.muted)}
                     }

@@ -55,6 +55,8 @@ Local imports preserve originals. GGUF imports use the native packer and
 prepare Sarvam's checksum-pinned public tokenizer when needed. Indexed MLX
 folders use the v2 converter. Existing packs are fully verified in place.
 App-managed removals retain conversations, memories and user-owned sources.
+Imported entries can also be removed from the library while preserving their
+original files.
 Local imports and remote transfers share the persistent pause/resume queue.
 Conversations whose model was removed remain readable; sending a new turn
 requires reinstalling their bound model rather than silently using another.

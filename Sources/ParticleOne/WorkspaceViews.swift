@@ -67,7 +67,7 @@ struct EditMessageView:View {
     var body:some View {
         VStack(alignment:.leading,spacing:18){
             Text("Edit your message").font(Design.heading(27))
-            Text("Churo Chat will answer again from this point in an edited continuation. Your original conversation is kept.").font(Design.body(11)).foregroundStyle(Design.muted)
+            Text("\(model.selectedModelName) will answer again from this point in an edited continuation. Your original conversation is kept.").font(Design.body(11)).foregroundStyle(Design.muted)
             TextEditor(text:$text).font(Design.body(13)).scrollContentBackground(.hidden).padding(12).frame(height:190).background(Design.surface,in:RoundedRectangle(cornerRadius:12)).overlay(RoundedRectangle(cornerRadius:12).stroke(Design.line,lineWidth:1)).accessibilityLabel("Edited message")
             if !model.connected {Text(model.loading ? "Loading the model…" : "Load the model to generate the edited answer.").font(Design.body(11)).foregroundStyle(Design.muted)}
             HStack{Button("Cancel"){dismiss()}.buttonStyle(HitButtonStyle());Spacer();if !model.connected{Button("Load model"){model.loadModel()}.buttonStyle(WashedButtonStyle(compact:true)).disabled(model.loading)};Button("Save & regenerate"){if model.editAndRegenerate(conversationID:request.conversationID,messageID:request.id,text:text){dismiss()}}.buttonStyle(WashedButtonStyle(compact:true)).keyboardShortcut(.return,modifiers:.command).disabled(!valid || !model.connected || model.busy || model.loading)}

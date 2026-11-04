@@ -39,6 +39,7 @@ public enum MLXPackConverter {
     }
     public static func plan(source: any ModelByteSource, provenance: ModelProvenance = .init()) async throws -> MLXPackPlan {
         let config = try await metadata(source,path:"config.json",limit:1_048_576)
+        if let reason=try ArchitectureRegistry.configurationIncompatibility(config) {throw ModelLibraryError.incompatible(reason)}
         let index = try await metadata(source,path:"model.safetensors.index.json",limit:16*1024*1024)
         guard let object = try JSONSerialization.jsonObject(with:index) as? [String:Any], let map = object["weight_map"] as? [String:String],
               !map.isEmpty, map.count <= 100_000, Set(map.values).count <= 128 else { throw ModelLibraryError.invalid("Invalid checkpoint shard index.") }

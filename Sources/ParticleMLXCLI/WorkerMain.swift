@@ -95,7 +95,14 @@ import ParticleDesktopProtocol
                     for suffix in configuration.suffixes {
                         log("Calibration: retained history \(history), new suffix \(suffix)")
                         let ids=(0..<(history+suffix)).map{seed[$0%seed.count]}
-                        results.append(.init(history:history,suffix:suffix,prefixExtensionSeconds:prefixSeconds,report:try ChronosValidation.compare(model:model,ids:ids,chunk:options.chunk,steps:configuration.decodeTokens,retainedHistory:prefix,rounds:configuration.rounds,candidateOnly:configuration.candidateOnly == true)))
+                        let report=try ChronosValidation.compare(model:model,ids:ids,chunk:options.chunk,steps:configuration.decodeTokens,retainedHistory:prefix,rounds:configuration.rounds,candidateOnly:configuration.candidateOnly == true)
+                        results.append(.init(history:history,suffix:suffix,prefixExtensionSeconds:prefixSeconds,report:report))
+                        log("Benchmark result: "+String(decoding:try JSONEncoder().encode(results.last!),as:UTF8.self))
+                        log("Checked history \(history), suffix \(suffix): reference compared=\(report.referenceCompared), parity=\(report.parityPassed), maximum logit difference=\(report.maxLogitDifference), continuation difference=\(report.maxContinuationDifference)")
+                        guard report.parityPassed || (!report.referenceCompared && report.executionFinite) else {
+                            FileHandle.standardOutput.write(try JSONEncoder().encode(results)+Data([10]))
+                            throw ModelLibraryError.incompatible("Warm-history reference parity failed. The adapter and current profile were not promoted.")
+                        }
                     }
                 }
                 FileHandle.standardOutput.write(try JSONEncoder().encode(results)+Data([10]))
@@ -128,7 +135,11 @@ import ParticleDesktopProtocol
                             messages = history.map{["role":$0.role,"content":$0.content]}
                             if let system = command.system {messages.insert(["role":"system","content":system],at:0)}
                             if let budget = command.reasoningBudget {options.budget = budget}
-                            try model.reset();continue
+                            // Restore replaces the transcript, not the model state.
+                            // The next rendered prompt must match token IDs before
+                            // the recurrent checkpoint can be reused. Explicit New
+                            // still clears every state immediately.
+                            if command.type == "reset" {try model.reset()};continue
                         }
                         guard command.type == "message",let content = command.text,content.utf8.count <= 900_000 else {
                             event(["event":"error","message":"This experimental worker supports chat only; tool execution is not qualified."]);continue
@@ -181,7 +192,7 @@ import ParticleDesktopProtocol
                     }
                     for index in 0..<options.maxNew {
                         if cancellation.isCancelled {throw CancellationError()}
-                        let token = limiter.mustClose ? closing : sampler.sample(logits:last).item(Int.self)
+                        let token = autoreleasepool {limiter.mustClose ? closing : sampler.sample(logits:last).item(Int.self)}
                         if stopIDs.contains(token) {finish = "stop";break}
                         if limiter.exhausted {finish = "reasoning_limit";break}
                         output.append(token);limiter.accept(token)

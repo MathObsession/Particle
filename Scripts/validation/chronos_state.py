@@ -87,6 +87,12 @@ def main():
             second = turn("What is the secret word? Reply with only the word.")
             checks["warm_history_reused"] = second["reused"] > 0
             checks["earlier_context_preserved"] = "violet" in second["text"].lower()
+            restore([{"role": "user", "content": "Remember that the secret word is violet. Reply only: noted"},
+                     {"role": "assistant", "content": first["text"]},
+                     {"role": "user", "content": "What is the secret word? Reply with only the word."},
+                     {"role": "assistant", "content": second["text"]}])
+            restored = turn("Repeat the secret word, with no explanation.")
+            checks["matching_restored_history_reuses_recurrent_checkpoint"] = restored["reused"] > 0 and "violet" in restored["text"].lower()
             unicode_turn = turn("Reply with exactly this text, with no explanation: café 🪷 नमस्ते")
             checks["unicode_input_and_stream"] = unicode_turn["finish"] != "unicode_boundary"
             # An over-limit request is rejected before touching the live lineage.

@@ -7,23 +7,11 @@ import Testing
 @Suite struct TranscriptTransitionTests {
     @Test(arguments: [true, false])
     func replayDrawsTheSavedPairBeforeThePendingImageTurn(progressive: Bool) {
-        let controller = InstructionTranscriptDocumentController(
-            environment: ["TURBO_FIELDFARE_PROGRESSIVE_RENDER": progressive ? "1" : "0"])
-        let storage = NSMutableAttributedString()
-        var planner = TranscriptSyncPlanner()
-        let prefix = NSAttributedString(string: "[saved image]\n")
-        @MainActor func update(_ epoch: UUID, first: Bool, newRun: Bool) {
-            controller.synchronizeHistory(storage: storage, planner: &planner,
-                input: .init(epoch: epoch, historyCount: 1, contextBreak: nil,
-                             startedNewRun: newRun, firstSynchronize: first)) { _ in
-                _ = controller.synchronize(storage: storage, prompt: "code word",
-                    response: "OK", isTerminal: true,
-                    promptPrefix: prefix, promptPrefixIdentifier: "saved-image")
-            }
-        }
-        update(UUID(), first: true, newRun: false)
-        let restored = UUID()
-        update(restored, first: false, newRun: true)
+        let fixture=ReplayTranscriptFixture(progressive:progressive)
+        let controller=fixture.controller,storage=fixture.storage
+        fixture.update(UUID(),first:true,newRun:false)
+        let restored=UUID()
+        fixture.update(restored,first:false,newRun:true)
         _ = controller.synchronize(storage: storage, prompt: "explain it", response: "",
             isTerminal: false, showsPrefillPlaceholder: true,
             promptPrefix: NSAttributedString(string: "[pending image]\n"),
@@ -36,7 +24,7 @@ import Testing
         #expect(storage.string.contains("[pending image]"))
         let frozen = controller.frozenLength
         let history = storage.attributedSubstring(from: NSRange(location: 0, length: frozen))
-        update(restored, first: false, newRun: false)
+        fixture.update(restored, first: false, newRun: false)
         #expect(controller.frozenLength == frozen)
         #expect(storage.attributedSubstring(from: NSRange(location: 0, length: frozen))
             .isEqual(to: history))
@@ -81,5 +69,24 @@ import Testing
         #expect(controller.answer(at: 0) == answer, "Copy must retain the original LaTeX")
         #expect(typesetter.calls.count == calls)
         #expect(storage.string.components(separatedBy: "follow up").count == 2)
+    }
+}
+
+/// Actor-owned reference state avoids transferring AppKit strings through a
+/// nested local-function capture on Swift 6.3's region isolation checker.
+@MainActor private final class ReplayTranscriptFixture {
+    let controller:InstructionTranscriptDocumentController
+    let storage=NSMutableAttributedString()
+    private var planner=TranscriptSyncPlanner()
+    private let prefix=NSAttributedString(string:"[saved image]\n")
+    init(progressive:Bool) {
+        controller=InstructionTranscriptDocumentController(environment:["TURBO_FIELDFARE_PROGRESSIVE_RENDER":progressive ? "1" : "0"])
+    }
+    func update(_ epoch:UUID,first:Bool,newRun:Bool) {
+        controller.synchronizeHistory(storage:storage,planner:&planner,
+            input:.init(epoch:epoch,historyCount:1,contextBreak:nil,startedNewRun:newRun,firstSynchronize:first)) { [self] _ in
+            _=controller.synchronize(storage:storage,prompt:"code word",response:"OK",isTerminal:true,
+                promptPrefix:prefix,promptPrefixIdentifier:"saved-image")
+        }
     }
 }

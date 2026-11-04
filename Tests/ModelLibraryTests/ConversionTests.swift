@@ -93,6 +93,22 @@ private struct GeneratedSource: ModelByteSource {
         #expect(restored.settings.modelID == ModelDescriptor.sarvam.id)
         #expect(restored.conversations[0].messages == conversation.messages)
     }
+    @Test func rejectsOverlappingOrMixedLayerExpertOwnership() throws {
+        let layout=plan(GeneratedSource(length:256,failAt:nil)),digest=String(repeating:"a",count:64)
+        let files=layout.payloadSizes.mapValues{ParticleV2File(bytes:$0,sha256:digest)}
+        let valid=ParticleV2Manifest(model:layout.model,files:files,tensors:layout.tensors,
+            sourceFiles:["checkpoint.bin":.init(bytes:256,sha256:digest)],expertHashes:["experts/layer_000.bin":[digest,digest]])
+        try valid.validate()
+        let overlap=ParticleV2Tensor(name:"overlap",dtype:"F32",shape:[2],file:"common.bin",offset:4,bytes:8)
+        let bad=ParticleV2Manifest(model:layout.model,files:files,tensors:layout.tensors+[overlap],sourceFiles:valid.sourceFiles,expertHashes:valid.expertHashes)
+        #expect(throws:(any Error).self){try bad.validate()}
+        let residentInExpertFile=ParticleV2Tensor(name:"resident",dtype:"F32",shape:[4],file:"experts/layer_000.bin",offset:0,bytes:16)
+        let sharedFile=ParticleV2Manifest(model:layout.model,files:files,tensors:[residentInExpertFile,layout.tensors[1]],sourceFiles:valid.sourceFiles,expertHashes:valid.expertHashes)
+        #expect(throws:(any Error).self){try sharedFile.validate()}
+        let wrongTag=ParticleV2Tensor(name:"language_model.model.layers.1.mlp.switch_mlp.gate_proj.weight",dtype:"U32",shape:[2,1,4],file:"experts/layer_000.bin",offset:0,bytes:16,layer:0,expertStride:16)
+        let mistagged=ParticleV2Manifest(model:layout.model,files:files,tensors:[layout.tensors[0],wrongTag],sourceFiles:valid.sourceFiles,expertHashes:valid.expertHashes)
+        #expect(throws:(any Error).self){try ArchitectureRegistry.validateChronosLayout(mistagged)}
+    }
     private func sourceBytes(_ range: Range<Int64>) -> Data {Data(range.map{UInt8(truncatingIfNeeded:$0)})}
 }
 private extension GeneratedSource {

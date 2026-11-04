@@ -1,6 +1,6 @@
 # Model library implementation status
 
-Updated 3 November 2026. This is a development checkpoint, not a released or
+Updated 4 November 2026. This is a development checkpoint, not a released or
 qualified Chronos adapter.
 
 Completed source components:
@@ -72,7 +72,22 @@ Validation evidence so far:
   developer tools were available in the worker environment.
 - Full warm-history comparison started on AC power: 512/2,048/4,096/8,192
   retained tokens, suffixes 1/16/64/128, 64 actual decode steps, ABBA upstream
-  selected-expert reference/candidate passes. Results remain pending.
+  selected-expert reference/candidate passes. The run hit the Metal resource
+  limit (499,000) during the final 2,048-token workload and exited 133. It did
+  not finish or qualify the adapter; the final aggregate report was not written.
+- The streaming loop omitted upstream MLX's per-step autorelease boundary and
+  joint evaluation of functional cache updates. Fixes are prepared, including
+  random-key evaluation for the validation-only module constructors, periodic
+  unused-buffer cleanup, incremental workload reports and MLX memory counters.
+  They still need a rebuild and fresh short/long comparisons.
+- Source implementation and recommendations are pushed in `06a7fac`; the
+  first Swift 6.3 test-compatibility adjustment in `455cb21` was insufficient.
+  A fixture that owns its AppKit state on the main actor is prepared for the
+  next clean CI run. All five native products built on that runner.
+- Further prepared changes preserve matching restored prefixes, reject
+  unsupported configurations before fetching tokenizer/header data, validate
+  expert-layer ownership/overlap, and allow forgetting an imported model
+  without deleting its original files. These changes are not yet validated.
 
 Still required before publishing/qualifying this feature:
 

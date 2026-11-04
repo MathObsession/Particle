@@ -45,4 +45,12 @@ import Testing
             #expect(!report.conversionSupported)
         }
     }
+    @Test func rejectsUnsupportedQuantizationBeforeReadingTensorHeadersOrTokenizer() throws {
+        let url=try #require(Bundle.module.url(forResource:"chronos-headers",withExtension:"json",subdirectory:"Fixtures"))
+        let fixture=try #require(JSONSerialization.jsonObject(with:Data(contentsOf:url)) as? [String:Any])
+        var root=try #require(fixture["configuration"] as? [String:Any])
+        #expect(try ArchitectureRegistry.configurationIncompatibility(JSONSerialization.data(withJSONObject:root)) == nil)
+        var quant=try #require(root["quantization"] as? [String:Any]);quant["bits"]=4;root["quantization"]=quant
+        #expect(try ArchitectureRegistry.configurationIncompatibility(JSONSerialization.data(withJSONObject:root))?.contains("3-bit") == true)
+    }
 }

@@ -49,7 +49,9 @@ struct ParticleOneSettings: View {
                         settingRow("Conversation capacity") {Picker("Conversation capacity",selection:$value.context){ForEach(contextChoices,id:\.self){Text("\($0) tokens").tag($0)}}.labelsHidden().frame(width:160)}
                         settingRow("Response allowance") {Picker("Response allowance",selection:$value.maxNew){ForEach(outputChoices,id:\.self){Text("\($0) tokens").tag($0)}}.labelsHidden().frame(width:160)}
                         Text(contextBudgetText).font(Design.body(10)).foregroundStyle(Design.muted)
-                        Toggle("Use the prepared SSD mirror when available",isOn:$value.useMirror).font(Design.body(11))
+                        if model.selectedModelDescriptor.architecture == .sarvam {
+                            Toggle("Use the prepared SSD mirror when available",isOn:$value.useMirror).font(Design.body(11))
+                        }
                     }.disabled(model.busy || model.loading)
                     section("Custom system prompt"){
                         Text("Private instructions for every conversation in this workspace. They are sent as the system prompt and never shown as a chat message.").font(Design.body(10)).foregroundStyle(Design.muted)

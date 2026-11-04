@@ -16,6 +16,8 @@ struct ChronosParityReport: Codable {
         let logitSHA256: String
         let continuationSHA256: String
         let tokensSHA256: String
+        let mlxActiveBytes:Int
+        let mlxPeakBytes:Int
     }
     let test: String
     let forcedContinuation: Bool
@@ -41,16 +43,17 @@ struct ChronosParityReport: Codable {
                 guard retained >= history.count else {throw ModelLibraryError.invalid("Warm-history restoration unexpectedly discarded its valid prefix.")}
             } else {try model.reset();retained=0}
             model.setReference(reference)
+            Memory.peakMemory=0
             let reads = model.expertReadBytes,start = ProcessInfo.processInfo.systemUptime
             var logits:MLXArray?=model.currentLogits
             for offset in stride(from:retained,to:ids.count,by:chunk) {logits = try model.evaluate(Array(ids[offset..<min(ids.count,offset+chunk)]))}
             guard var last = logits else {throw ModelLibraryError.invalid("An input is required for parity validation.")}
-            let prefilled = ProcessInfo.processInfo.systemUptime,initial = last.asType(.float32).asArray(Float.self)
+            let prefilled = ProcessInfo.processInfo.systemUptime,initial = autoreleasepool {last.asType(.float32).asArray(Float.self)}
             var tokens = [Int]()
             for _ in 0..<steps {
-                let token = argMax(last).item(Int.self);tokens.append(token);last = try model.evaluate([token])
+                let token = autoreleasepool {argMax(last).item(Int.self)};tokens.append(token);last = try model.evaluate([token])
             }
-            let finished = ProcessInfo.processInfo.systemUptime,final = last.asType(.float32).asArray(Float.self)
+            let finished = ProcessInfo.processInfo.systemUptime,final = autoreleasepool {last.asType(.float32).asArray(Float.self)}
             guard initial.allSatisfy(\.isFinite),final.allSatisfy(\.isFinite) else {throw ModelLibraryError.invalid("Non-finite validation logits.")}
             if baseline.isEmpty {baseline = initial;baselineEnd = final;baselineTokens = tokens}
             let initialDifference = zip(initial,baseline).map{abs($0-$1)}.max() ?? .infinity
@@ -58,7 +61,7 @@ struct ChronosParityReport: Codable {
             difference = max(difference,initialDifference)
             endDifference = max(endDifference,finalDifference)
             matching = matching && tokens == baselineTokens
-            passes.append(.init(mode:reference ? "upstream-selected-expert-reference" : "streamed-candidate",prefillSeconds:prefilled-start,decodeSeconds:finished-prefilled,decodeSteps:steps,sourceReadBytes:model.expertReadBytes-reads,maxLogitDifference:initialDifference,maxContinuationDifference:finalDifference,continuationMatches:tokens == baselineTokens,logitSHA256:digest(initial),continuationSHA256:digest(final),tokensSHA256:digest(tokens.map(Int32.init))))
+            passes.append(.init(mode:reference ? "upstream-selected-expert-reference" : "streamed-candidate",prefillSeconds:prefilled-start,decodeSeconds:finished-prefilled,decodeSteps:steps,sourceReadBytes:model.expertReadBytes-reads,maxLogitDifference:initialDifference,maxContinuationDifference:finalDifference,continuationMatches:tokens == baselineTokens,logitSHA256:digest(initial),continuationSHA256:digest(final),tokensSHA256:digest(tokens.map(Int32.init)),mlxActiveBytes:Memory.activeMemory,mlxPeakBytes:Memory.peakMemory))
         }
         if let history=retainedHistory {_=try model.rewindForPrompt(history)}else{try model.reset()}
         model.setReference(false)

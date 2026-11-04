@@ -7,7 +7,11 @@ import ParticleDesktopProtocol
 extension WorkspaceModel {
     var modelInstallationActive: Bool {installer.running || library.converting || nativeLibraryProcess != nil || nativeLibraryTask != nil}
     var activeConversationModelID:String {codeMode ? (code.session?.modelID ?? settings.modelID) : (selected?.modelID ?? ModelDescriptor.sarvam.id)}
-    var conversationUsesCurrentModel:Bool {activeConversationModelID == settings.modelID}
+    var conversationUsesCurrentModel:Bool {
+        guard activeConversationModelID == settings.modelID else{return false}
+        if settings.modelID == ModelDescriptor.sarvam.id {return true}
+        return library.installed.contains{$0.id == settings.modelID && $0.path == settings.modelPath && Self.modelExists($0.path)}
+    }
     var selectedModelDescriptor: ModelDescriptor {library.installed.first(where: {$0.path == settings.modelPath})?.descriptor ?? .sarvam}
     var selectedModelName: String {selectedModelDescriptor.id == ModelDescriptor.sarvam.id ? (codeMode ? "Churo Code" : "Churo Chat") : selectedModelDescriptor.name}
     var currentSystemPrompt: String {state.systemPrompt(model:selectedModelDescriptor)}
@@ -17,7 +21,13 @@ extension WorkspaceModel {
             let descriptor = library.installed.first(where:{$0.id == id})?.descriptor ?? .sarvam
             guard descriptor.supportsTools else {notice = "This session’s model has not qualified for coding tools.";return false}
         }
-        guard id != settings.modelID else {return true}
+        if id == settings.modelID {
+            let installed = library.installed.first(where:{$0.id == id})
+            if installed?.path == settings.modelPath, Self.modelExists(settings.modelPath) {return true}
+            // Legacy default installations can still use the setup flow without
+            // a library record. Reimported packs otherwise restore their new path.
+            if id == ModelDescriptor.sarvam.id, installed == nil {return true}
+        }
         guard !busy,!loading,let installed = library.installed.first(where: {$0.id == id}),Self.modelExists(installed.path) else {
             notice = "This conversation’s model is not installed. Its transcript is preserved in the sidebar.";return false
         }

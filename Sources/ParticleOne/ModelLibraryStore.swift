@@ -202,7 +202,16 @@ struct LibraryListing: Codable, Identifiable, Sendable {
     func remove(_ model: InstalledModel) {
         guard !saveBlocked else {return}
         do {
+            if !model.managed {
+                guard let saved=registry.models.first(where:{$0.id == model.id}),saved.path == model.path,!saved.managed else {throw ModelLibraryError.invalid("This imported entry changed. Refresh Installed before removing it.")}
+                var next=registry;next.forget(model.id)
+                try next.save(to:root.appendingPathComponent("installed-models.json"));registry=next;return
+            }
             let url = try InstalledModelRegistry.removableURL(model,managedRoot:managedRoot)
+            if !FileManager.default.fileExists(atPath:url.path) {
+                var next=registry;next.forget(model.id)
+                try next.save(to:root.appendingPathComponent("installed-models.json"));registry=next;return
+            }
             // Rename on the same volume first; a failed registry commit can
             // restore the model without copying its payload.
             let tombstone = managedRoot.appendingPathComponent(".removing-"+UUID().uuidString+".particle")

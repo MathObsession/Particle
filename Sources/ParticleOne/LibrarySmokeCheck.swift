@@ -4,6 +4,40 @@ import ParticleOneCore
 import ParticleModelLibrary
 
 @MainActor enum LibrarySmokeCheck {
+    static func runNative(_ model:WorkspaceModel,source:URL,output:String) async {
+        guard !model.preview,model.directory.path.hasPrefix("/private/tmp/particle-agent-native-"),
+              ProcessInfo.processInfo.environment["PARTICLEONE_ENGINE_PATH"] == nil else {NSApp.terminate(nil);return}
+        var checks=[String:Bool](),detail=""
+        func wait(_ seconds:Double,_ condition:@MainActor ()->Bool) async -> Bool {
+            let deadline=ProcessInfo.processInfo.systemUptime+seconds
+            while ProcessInfo.processInfo.systemUptime < deadline {if condition(){return true};try? await Task.sleep(for:.milliseconds(150))}
+            return false
+        }
+        do {
+            let before=try ArchitectureRegistry.boundedData(source.appendingPathComponent("manifest.json"),limit:16*1024*1024)
+            model.inspectLocalLibraryModel(source)
+            checks["import_completed"]=await wait(240){!model.modelInstallationActive} && model.library.jobs.last?.stage == .ready
+            guard let installed=model.library.installed.first(where:{$0.path == source.path}) else {throw ModelLibraryError.invalid(model.library.message ?? "The native import did not register its verified pack.")}
+            checks["existing_pack_verified_in_place"]=installed.path == source.path && !installed.managed
+            checks["import_has_persistent_ready_job"]=model.library.jobs.last?.localSource == source.path && model.library.jobs.last?.stage == .ready
+            model.useInstalledModel(installed)
+            checks["conversation_bound_to_imported_model"]=model.selected?.modelID == installed.id && model.settings.modelID == installed.id
+            var settings=model.settings;settings.context=4096;settings.maxNew=32;settings.temperature=0;settings.responseStyle = .direct
+            model.updateSettings(settings);model.loadModel()
+            checks["native_worker_handshake"]=await wait(120){model.connected || model.notice != nil} && model.connected
+            guard model.connected else {throw ModelLibraryError.invalid(model.notice ?? "The native model did not connect.")}
+            model.draft="Reply with only the word ready.";model.submit()
+            checks["native_response_completed"]=await wait(120){!model.busy} && model.selected?.messages.last?.complete == true
+            checks["input_bytes_acknowledged"]=model.inputVerified == true
+            checks["native_reply_received"]=model.selected?.messages.last?.content.lowercased().contains("ready") == true
+            checks["source_manifest_unchanged"]=(try ArchitectureRegistry.boundedData(source.appendingPathComponent("manifest.json"),limit:16*1024*1024)) == before
+            checks["no_model_payload_copy"]=(try FileManager.default.contentsOfDirectory(at:model.library.managedRoot,includingPropertiesForKeys:nil)).allSatisfy{$0.pathExtension != "particle"}
+        } catch {detail=error.localizedDescription}
+        model.unload();checks["owned_worker_stopped"]=await wait(30){model.modelProcessID == nil && !model.loading}
+        let report:[String:Any]=["passed":detail.isEmpty && checks.values.allSatisfy{$0},"checks":checks,"detail":detail,"mode":"Native app import, full pack verification and chat; isolated data; one packaged worker; no model copy"]
+        if let data=try? JSONSerialization.data(withJSONObject:report,options:[.prettyPrinted,.sortedKeys]) {try? data.write(to:URL(fileURLWithPath:output))}
+        NSApp.terminate(nil)
+    }
     static func run(_ model:WorkspaceModel,output:String) {
         guard model.preview,model.directory.path.hasPrefix("/private/tmp/particleone-smoke-"),
               ProcessInfo.processInfo.environment["PARTICLEONE_ENGINE_PATH"] != nil else {NSApp.terminate(nil);return}
@@ -43,6 +77,13 @@ import ParticleModelLibrary
             checks["managed_removal_keeps_conversation"] = !FileManager.default.fileExists(atPath:second.path) && model.state.conversations.contains(where:{$0.id == secondConversation})
             if let secondConversation {model.select(secondConversation)}
             checks["missing_model_transcript_readable_without_fallback"]=model.state.selected == secondConversation && !model.conversationUsesCurrentModel && model.settings.modelID == ModelDescriptor.sarvam.id
+            guard model.library.register(other,path:outside.path,managed:false) else {throw ModelLibraryError.invalid("Imported fixture registration failed.")}
+            for name in ["manifest.json","verified-install.json"] {try Data("{}".utf8).write(to:outside.appendingPathComponent(name))}
+            if let imported=model.library.installed.first(where:{$0.id == other.id}) {model.useInstalledModel(imported)}
+            model.library.remove(owned)
+            checks["import_removal_forgets_entry_and_preserves_original"]=FileManager.default.fileExists(atPath:outside.path) && !model.library.installed.contains(where:{$0.id == other.id})
+            checks["removing_current_import_keeps_readonly_transcript"]=model.selected?.modelID == other.id && !model.conversationUsesCurrentModel
+            if let original {model.select(original)}
             let id=model.library.beginJob(repository:"fixture/model",revision:String(repeating:"a",count:40),destination:root.appendingPathComponent("download.particle"),total:1024)
             let reopened=ModelLibraryStore(root:model.directory)
             checks["restart_pauses_pending_install"]=id != nil && reopened.jobs.first(where:{$0.id == id})?.stage == .paused

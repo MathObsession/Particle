@@ -104,6 +104,7 @@ public actor HuggingFaceClient {
         guard let object = try JSONSerialization.jsonObject(with: config) as? [String: Any], object["model_type"] as? String == "qwen3_5_moe" else {
             return .unsupported("No qualified Particle streaming adapter matches this model family.")
         }
+        if let reason=try ArchitectureRegistry.configurationIncompatibility(config) {return .unsupported(reason)}
         let indexData = try await metadata(card, path: "model.safetensors.index.json", limit: 16*1024*1024)
         guard let index = try JSONSerialization.jsonObject(with: indexData) as? [String: Any], let map = index["weight_map"] as? [String: String],
               !map.isEmpty, map.count <= 100_000, Set(map.values).count <= 128 else { throw ModelLibraryError.invalid("Invalid checkpoint shard index.") }

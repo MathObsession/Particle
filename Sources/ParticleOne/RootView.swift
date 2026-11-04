@@ -57,7 +57,7 @@ struct ParticleOneRootView: View {
             Button("Cancel",role:.cancel){model.pendingConversationDeletion=nil}
             Button("Delete",role:.destructive){if let id=model.pendingConversationDeletion{model.delete(id)};model.pendingConversationDeletion=nil}
         } message: {Text("This removes its saved transcript from this Mac.")}
-        .onAppear{if !CommandLine.arguments.contains("--smoke-test") && !CommandLine.arguments.contains("--agent-native-smoke"){model.inspectModel()}}
+        .onAppear{if !CommandLine.arguments.contains("--smoke-test") && !CommandLine.arguments.contains("--agent-native-smoke") && !CommandLine.arguments.contains("--library-native-smoke"){model.inspectModel()}}
     }
     private var sidebar: some View {
         VStack(alignment:.leading,spacing:0) {
@@ -210,7 +210,7 @@ struct ParticleOneRootView: View {
                 .onChange(of:model.state.selected){_,_ in proxy.scrollTo("bottom",anchor:.bottom)}
         }
     }
-    private func beginEditing(_ message:ChatMessage){guard let id=model.state.selected else{return};editingRequest=MessageEditRequest(conversationID:id,message:message)}
+    private func beginEditing(_ message:ChatMessage){guard model.conversationUsesCurrentModel else{model.showModelLibrary=true;return};guard let id=model.state.selected else{return};editingRequest=MessageEditRequest(conversationID:id,message:message)}
     private var thinkingToggle:some View {
         Button{model.setThinkingEnabled(!model.thinkingEnabled)}label:{
             HStack(spacing:6){Image(systemName:model.thinkingEnabled ? "sparkle" : "bolt");Text(model.thinkingEnabled ? "Thinking" : "Instant")}

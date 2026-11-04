@@ -16,7 +16,7 @@ import TurboFieldfareMacPresentation
                 while model.busy || model.loading {try? await Task.sleep(for:.milliseconds(250))}
                 model.updateRestartPending=true;model.persist();_ = model.shutdownWorker();await model.finishShutdown()
             }
-            model.updates.start(disabled:model.preview || CommandLine.arguments.contains("--smoke-test"))
+            model.updates.start(disabled:model.preview || CommandLine.arguments.contains("--smoke-test") || CommandLine.arguments.contains("--library-native-smoke"))
         }
         DispatchQueue.main.asyncAfter(deadline:.now()+1) {
             for window in NSApp.windows {window.isMovableByWindowBackground=true;window.titlebarAppearsTransparent=true;window.backgroundColor=NSColor(Design.paper)}
@@ -36,6 +36,10 @@ import TurboFieldfareMacPresentation
         if let index=CommandLine.arguments.firstIndex(of:"--agent-native-smoke"),CommandLine.arguments.indices.contains(index+1),let model=Self.model{let output=CommandLine.arguments[index+1];Task{await SmokeCheck.nativeAgent(model,output:output)}}
         if let index=CommandLine.arguments.firstIndex(of:"--web-smoke"),CommandLine.arguments.indices.contains(index+1){let output=CommandLine.arguments[index+1];Task{await SmokeCheck.web(output:output)}}
         if let index=CommandLine.arguments.firstIndex(of:"--library-smoke"),CommandLine.arguments.indices.contains(index+1),let model=Self.model {LibrarySmokeCheck.run(model,output:CommandLine.arguments[index+1])}
+        if let index=CommandLine.arguments.firstIndex(of:"--library-native-smoke"),CommandLine.arguments.indices.contains(index+2),let model=Self.model {
+            let source=URL(fileURLWithPath:CommandLine.arguments[index+1]),output=CommandLine.arguments[index+2]
+            Task {await LibrarySmokeCheck.runNative(model,source:source,output:output)}
+        }
         if let index=CommandLine.arguments.firstIndex(of:"--installer-smoke"),CommandLine.arguments.indices.contains(index+1) {
             let output=CommandLine.arguments[index+1];Task{await SmokeCheck.installer(output:output)}
         }
