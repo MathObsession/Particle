@@ -14,11 +14,12 @@ The SwiftUI app uses a green, grain-textured ParticleDesign interface with PT Se
 - [Building from source](docs/BUILDING_PARTICLE.md)
 - [Model library, lossless conversion and adapter status](docs/MODEL_LIBRARY.md)
 
-The model-library implementation adds native public Hugging Face discovery,
-local imports and per-model profiles. Sarvam remains the default. The new
-Chronos/Qwen3.5 MoE adapter is experimental and stays hidden from normal
-installation until its reference and conversation-state checks qualify it.
-The existing public tester release does not yet include this development work.
+Particle 0.4.0 includes public Hugging Face discovery, recommended MoE models,
+local imports, verified resumable conversion and per-model profiles. Sarvam remains
+the default for Churo Chat and Churo Code. Chronos-Ornith is available as an
+**early-access chat-only** alternative; exhaustive long-context and sustained-speed
+qualification is incomplete. Models outside supported, verified layouts are hidden.
+See the [0.4.0 release](https://github.com/MathObsession/Particle/releases/tag/v0.4.0).
 
 The underlying engine is a TurboFieldfare fork adapted to the Sarvam 30B base model, with Swift/Metal inference and bounded MoE expert streaming from GGUF or native `.particle` packs. Churo names describe the assistant experience, not newly trained weights. Original licenses and technical attribution are retained. This source repository contains no model weights, credentials, chats, or build archives.
 

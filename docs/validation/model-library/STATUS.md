@@ -49,3 +49,12 @@ clean worker shutdown with developer tools unavailable. This caught and fixed
 the desktop top-k sampler’s missing batch dimension. The result and installation
 receipts are kept with local release evidence. Models, transcripts and memories are preserved
 when older application releases are pruned.
+
+## Published release
+
+Particle 0.4.0, build `20261104130529`, is installed locally and published at
+https://github.com/MathObsession/Particle/releases/tag/v0.4.0. The archive SHA-256 is
+`65fbba2de03a46988e4cc2b80b6474a211caf5614b19fa35752a8f4b45ec76c1`,
+matching GitHub’s uploaded asset digest. The existing internal Chronos pack was
+registered without copying its weights; older application releases were removed
+after verified installation. Chat data and models were preserved.
