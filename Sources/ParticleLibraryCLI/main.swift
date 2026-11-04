@@ -110,6 +110,16 @@ import ParticlePackCore
                 let card = try await HuggingFaceClient().model(HubRepository.parse(repo),revision:values["--revision"])
                 provenance = .init(repository:card.repository,revision:card.revision,license:card.license)
                 source = try RemoteModelByteSource(card:card)
+                if card.files.contains(where:{$0.path == "manifest.json"}) {
+                    let native=try await NativePackDownload.plan(source:source)
+                    if flags.contains("--plan") {try emit(native.layout);return}
+                    guard native.report.installable || flags.contains("--allow-unqualified-conversion") else {throw ModelLibraryError.incompatible(native.report.reason)}
+                    guard let path=values["--output"] else {throw ModelLibraryError.invalid("Specify --output ending in .particle.")}
+                    try await MLXPackConverter.convert(source:source,plan:native.layout,output:URL(fileURLWithPath:path),resume:flags.contains("--resume"),nativeManifest:native.manifest) {done,total,detail in
+                        try? progress(done,total,detail)
+                    }
+                    try emit(["event":"converted","path":path,"runtime":native.report.qualification.rawValue]);return
+                }
             } else {
                 let root = URL(fileURLWithPath:values["--source"]!,isDirectory:true)
                 let data = try ArchitectureRegistry.boundedData(root.appendingPathComponent("model.safetensors.index.json"),limit:16*1024*1024)
