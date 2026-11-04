@@ -139,6 +139,7 @@ final class DesktopPipeReader: @unchecked Sendable {
                 if let id=self.libraryInstallJob {self.library.updateJob(id,stage:.failed,progress:1,detail:detail);self.libraryInstallJob=nil}
                 return
             }
+            if self.settings.modelID == ModelDescriptor.sarvam.id {self.library.updateProfile(path:model.path,settings:self.settings)}
             if let id=self.libraryInstallJob {self.library.updateJob(id,stage:.ready,progress:1,detail:"Verified and ready");self.libraryInstallJob=nil}
             if selectWhenComplete {self.state.settings.modelPath=model.path;self.state.settings.modelID=ModelDescriptor.sarvam.id;self.library.updateProfile(path:model.path,settings:self.settings);self.showSetup=false;self.persist();self.loadModel()}
         }
