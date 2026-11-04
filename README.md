@@ -14,13 +14,14 @@ The SwiftUI app uses a green, grain-textured ParticleDesign interface with PT Se
 - [Building from source](docs/BUILDING_PARTICLE.md)
 - [Model library, lossless conversion and adapter status](docs/MODEL_LIBRARY.md)
 
-Particle 0.4.1 includes searchable Hugging Face models, explicit compatibility
-results, verified automatic conversion and per-model expert selectors. Its MLX
-streaming recipes derive Qwen3 MoE and text-only Qwen3.5 MoE graphs from configuration
-and tensor headers instead of requiring Chronos’s exact checkpoint. Sarvam remains
-the Churo default. Other architectures show the missing adapter; arbitrary new
-architectures are not synthesized from their names. MLX alternatives are early-access,
-chat only, with no universal speed claim. See the [model-library guide](docs/MODEL_LIBRARY.md).
+Particle 0.5.0 adds an automatic MoE graph compiler: it inspects a bundled MLX graph,
+infers expert projections and checkpoint assemblies, and generates a verified v3
+`.particle` execution plan without a Particle-specific adapter for each family.
+Models includes public Hugging Face search, starter recommendations and per-model
+expert controls. Sarvam remains the default; other models are early-access Chat.
+Compatibility depends on supported graph operations, native layouts and available
+memory, with no universal speed guarantee. See the [graph compiler](docs/PARTICLE_GRAPH_COMPILER.md)
+and [model-library guide](docs/MODEL_LIBRARY.md).
 
 The underlying engine is a TurboFieldfare fork adapted to the Sarvam 30B base model, with Swift/Metal inference and bounded MoE expert streaming from GGUF or native `.particle` packs. Churo names describe the assistant experience, not newly trained weights. Original licenses and technical attribution are retained. This source repository contains no model weights, credentials, chats, or build archives.
 

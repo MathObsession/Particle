@@ -31,14 +31,14 @@ public struct ParticleV2Manifest: Codable, Equatable, Sendable {
     public let sourceFiles: [String: ParticleV2File]
     public let expertHashes: [String: [String]]
     public init(model: ModelDescriptor, files: [String: ParticleV2File], tensors: [ParticleV2Tensor], sourceFiles: [String: ParticleV2File], expertHashes: [String: [String]]) {
-        magic = ParticleFormat.magic; versionMajor = 2; self.model = model
+        magic = ParticleFormat.magic; versionMajor = model.graph == nil ? 2 : 3; self.model = model
         self.files = files; self.tensors = tensors; self.sourceFiles = sourceFiles
         self.expertHashes = expertHashes
     }
     public func validate() throws {
         try model.validate()
-        guard magic == ParticleFormat.magic, versionMajor == 2, [.qwen35MoE,.qwen3MoE].contains(model.architecture),model.id != ModelDescriptor.sarvam.id,
-              !files.isEmpty, files.count <= 512, !sourceFiles.isEmpty, sourceFiles.count <= 512,
+        guard magic == ParticleFormat.magic, [2,3].contains(versionMajor), [.qwen35MoE,.qwen3MoE,.mlxGraph].contains(model.architecture), (versionMajor == 3) == (model.graph != nil),model.id != ModelDescriptor.sarvam.id,
+              !files.isEmpty, files.count <= 2048, !sourceFiles.isEmpty, sourceFiles.count <= 512,
               !tensors.isEmpty, tensors.count <= 100_000, Set(tensors.map(\.name)).count == tensors.count else {
             throw ModelLibraryError.invalid("Unsupported or incomplete Particle v2 manifest.")
         }
@@ -74,15 +74,15 @@ public struct ParticleV2Manifest: Codable, Equatable, Sendable {
             }
             guard expected == tensor.bytes else {throw ModelLibraryError.invalid("Tensor bytes do not match its shape.")}
             if let layer = tensor.layer {
-                guard (0..<model.layers).contains(layer), tensor.shape.first == model.experts,
-                      let stride = tensor.expertStride, stride >= tensor.bytes,stride <= 32*1024*1024, file.bytes % stride == 0,
-                      file.bytes/stride == Int64(model.experts), tensor.offset < stride,
+                guard (model.graph?.banks[layer] != nil || (model.graph == nil && (0..<model.layers).contains(layer))), tensor.shape.first == (model.graph?.banks[layer] ?? model.experts),
+                      let stride = tensor.expertStride, stride >= tensor.bytes,stride <= (model.graph == nil ? 32 : 256)*1024*1024, file.bytes % stride == 0,
+                      file.bytes/stride == Int64(model.graph?.banks[layer] ?? model.experts), tensor.offset < stride,
                       tensor.bytes <= stride-tensor.offset else { throw ModelLibraryError.invalid("Invalid expert tensor layout.") }
             } else if tensor.expertStride != nil { throw ModelLibraryError.invalid("Resident tensor has an expert stride.") }
         }
         let expertFiles = Set(tensors.filter {$0.layer != nil}.map(\.file))
         let layers=Dictionary(grouping:tensors.filter{$0.layer != nil},by:{$0.layer!})
-        guard layers.count == model.layers,expertFiles.count == model.layers,
+        guard layers.count == (model.graph?.banks.count ?? model.layers),expertFiles.count == layers.count,
               Set(tensors.filter{$0.layer == nil}.map(\.file)).isDisjoint(with:expertFiles) else {
             throw ModelLibraryError.invalid("Resident and routed tensor ownership is inconsistent.")
         }
@@ -98,7 +98,7 @@ public struct ParticleV2Manifest: Codable, Equatable, Sendable {
                 end=tensor.offset+tensor.bytes
             }
         }
-        guard Set(expertHashes.keys) == expertFiles,expertHashes.values.allSatisfy({$0.count == model.experts && $0.allSatisfy(ParticleFormat.digestIsValid)}) else {
+        guard Set(expertHashes.keys) == expertFiles,expertHashes.allSatisfy({file,hashes in let bank=tensors.first(where:{$0.file == file})?.layer;return hashes.count == (bank.flatMap{model.graph?.banks[$0]} ?? model.experts) && hashes.allSatisfy(ParticleFormat.digestIsValid)}) else {
             throw ModelLibraryError.invalid("Missing per-expert verification hashes.")
         }
     }

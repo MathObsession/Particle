@@ -1,0 +1,8 @@
+{
+  "version": "0.5.0",
+  "build": "20261104161646",
+  "bundled_metadata_compiler": true,
+  "bundled_sampled_chat": true,
+  "developer_environment_removed": true,
+  "trained_model_benchmark": false
+}

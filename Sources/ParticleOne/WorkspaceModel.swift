@@ -195,9 +195,10 @@ final class DesktopPipeReader: @unchecked Sendable {
     func toggleSidebar(){setSidebarExpanded(state.sidebarHidden)}
     func setSidebarExpanded(_ expanded:Bool){guard state.sidebarHidden==expanded else{return};state.sidebarHidden = !expanded;persist()}
     var modelProcessID:Int32? {worker?.isRunning==true ? worker?.processIdentifier : nil}
-    var thinkingEnabled:Bool {(codeMode ? settings.codeResponseStyle : settings.responseStyle) != .direct}
+    var supportsThinkingControl:Bool {selectedModelDescriptor.supportsReasoning ?? true}
+    var thinkingEnabled:Bool {supportsThinkingControl && (codeMode ? settings.codeResponseStyle : settings.responseStyle) != .direct}
     func setThinkingEnabled(_ enabled:Bool){
-        guard !busy,!loading,enabled != thinkingEnabled else{return}
+        guard !busy,!loading,supportsThinkingControl,enabled != thinkingEnabled else{return}
         var value=settings;if codeMode{value.codeResponseStyle=enabled ? .brief : .direct}else{value.responseStyle=enabled ? .brief : .direct};updateSettings(value)
     }
     func setUsername(_ name:String){let clean=name.trimmingCharacters(in:.whitespacesAndNewlines);guard !clean.isEmpty,clean.count<=80 else{return};state.username=clean;persist()}

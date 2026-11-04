@@ -1,0 +1,35 @@
+[
+  {
+    "name": "mixtral-normalized",
+    "backend": "mixtral",
+    "format": 3,
+    "exact_tensor_checks": 31,
+    "normalization_assemblies": 9,
+    "max_logit_difference": 0,
+    "max_continuation_difference": 0,
+    "parity_passed": true,
+    "source_unchanged": true
+  },
+  {
+    "name": "olmoe-compiled",
+    "backend": "olmoe",
+    "format": 3,
+    "exact_tensor_checks": 33,
+    "normalization_assemblies": 0,
+    "max_logit_difference": 0,
+    "max_continuation_difference": 0,
+    "parity_passed": true,
+    "source_unchanged": true
+  },
+  {
+    "name": "mxfp4-compiled",
+    "backend": "qwen3_moe",
+    "format": 3,
+    "exact_tensor_checks": 24,
+    "normalization_assemblies": 0,
+    "max_logit_difference": 0,
+    "max_continuation_difference": 0,
+    "parity_passed": true,
+    "source_unchanged": true
+  }
+]

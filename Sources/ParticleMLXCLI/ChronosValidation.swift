@@ -30,7 +30,7 @@ struct ChronosParityReport: Codable {
     let executionFinite:Bool
 }
 @MainActor enum ChronosValidation {
-    static func compare(model: ChronosModel, ids: [Int], chunk: Int, steps: Int,retainedHistory:[Int]? = nil,rounds:Int=1,candidateOnly:Bool=false) throws -> ChronosParityReport {
+    static func compare(model: any ParticleStreamedModel, ids: [Int], chunk: Int, steps: Int,retainedHistory:[Int]? = nil,rounds:Int=1,candidateOnly:Bool=false) throws -> ChronosParityReport {
         var baseline = [Float](),baselineEnd = [Float](),baselineTokens = [Int](),passes = [ChronosParityReport.Pass]()
         var difference:Float = 0,endDifference:Float = 0,matching = true
         func digest<T>(_ values:[T])->String {values.withUnsafeBytes{SHA256.hash(data:Data($0)).map{String(format:"%02x",$0)}.joined()}}

@@ -26,10 +26,10 @@ struct ParticleOneSettings: View {
                     }
                     section("Responses"){
                         Text("Chat").font(Design.medium(11))
-                        Picker("Chat response mode",selection:$value.responseStyle){ForEach(ResponseStyle.allCases,id:\.self){Text($0.title).tag($0)}}.pickerStyle(.segmented).labelsHidden()
+                        Picker("Chat response mode",selection:$value.responseStyle){ForEach(ResponseStyle.allCases,id:\.self){Text($0.title).tag($0)}}.pickerStyle(.segmented).labelsHidden().disabled(!model.supportsThinkingControl)
                         Text("Code").font(Design.medium(11))
                         Picker("Code response mode",selection:$value.codeResponseStyle){ForEach(ResponseStyle.allCases,id:\.self){Text($0.title).tag($0)}}.pickerStyle(.segmented).labelsHidden()
-                        Text("Instant skips reasoning using an empty thinking prefix and a zero-token reasoning budget. Thinking allows up to 64 reasoning tokens; Thinking · extended uses the model’s original behavior. Chat and Code remember their modes separately.").font(Design.body(10)).lineSpacing(4).foregroundStyle(Design.muted)
+                        Text(model.supportsThinkingControl ? "Instant skips reasoning using an empty thinking prefix and a zero-token reasoning budget. Thinking allows up to 64 reasoning tokens; Thinking · extended uses the model’s original behavior. Chat and Code remember their modes separately." : "This model uses its original response format. Its template does not expose a supported thinking toggle.").font(Design.body(10)).lineSpacing(4).foregroundStyle(Design.muted)
                     }.disabled(model.busy || model.loading)
                     section("Your model"){
                         HStack{ParticleMark(size:42);VStack(alignment:.leading,spacing:4){Text(model.selectedModelName).font(Design.medium(14));Text(model.selectedModelDescriptor.quantization.label+" · runs on your Mac").font(Design.body(10)).foregroundStyle(Design.muted)};Spacer();if model.connected{Button("Unload"){model.unload()}.disabled(model.busy)}}
@@ -80,7 +80,7 @@ struct ParticleOneSettings: View {
     }
     private var outputChoices:[Int]{Array(Set([128,256,512,768,1024,2048,4096,8192,16_384,32_768,65_536].filter{$0<value.context}+[value.maxNew])).sorted()}
     private var contextChoices:[Int]{Array(Set((model.selectedModelDescriptor.architecture == .sarvam ? ParticleContextPolicy.available() : [4096,8192,16384,32768,65536,131072,262144].filter{$0 <= ModelRuntimeProfile(model:model.selectedModelDescriptor).context})+[value.context])).sorted()}
-    private var slotRange:ClosedRange<Int>{model.selectedModelDescriptor.architecture == .sarvam ? 6...16 : 8...32}
+    private var slotRange:ClosedRange<Int>{model.selectedModelDescriptor.architecture == .sarvam ? 6...16 : model.selectedModelDescriptor.graph == nil ? 8...32 : 1...32}
     private var cacheBudgetText:String{
         if let bytes=model.library.installed.first(where:{$0.path==value.modelPath})?.profile.expertBytesPerSlot{return String(format:"Expert buffer budget: about %.2f GiB. Model, conversation and system memory are additional.",Double(bytes)*Double(value.slots)/1_073_741_824)}
         return "More slots may reduce disk reads. Leave room for model weights, conversation memory and macOS."

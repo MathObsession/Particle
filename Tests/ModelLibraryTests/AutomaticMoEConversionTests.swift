@@ -31,6 +31,6 @@ import ParticleOneCore
         let card=HubModelCard(repository:"publisher/Mixtral-8x7B",revision:String(repeating:"a",count:40),tags:["mixtral"])
         #expect(card.isMoECandidate)
         let unsupported=try ArchitectureRegistry.configurationIncompatibility(JSONSerialization.data(withJSONObject:["model_type":"mixtral"]))
-        #expect(unsupported?.contains("graph adapter") == true)
+        #expect(unsupported == nil)
     }
 }

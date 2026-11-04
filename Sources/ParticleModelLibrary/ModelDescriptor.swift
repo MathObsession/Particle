@@ -1,7 +1,7 @@
 import Foundation
 import CryptoKit
 
-public enum ModelArchitecture: String, Codable, Sendable { case sarvam = "sarvam_moe", qwen35MoE = "qwen3_5_moe", qwen3MoE = "qwen3_moe" }
+public enum ModelArchitecture: String, Codable, Sendable { case sarvam = "sarvam_moe", qwen35MoE = "qwen3_5_moe", qwen3MoE = "qwen3_moe", mlxGraph = "mlx_graph_moe" }
 public enum ModelArtifact: String, Codable, Sendable { case particle, gguf, mlx }
 public enum AdapterQualification: String, Codable, Sendable { case qualified, experimental }
 
@@ -40,24 +40,27 @@ public struct ModelDescriptor: Codable, Equatable, Identifiable, Sendable {
     public let sourceBytes: Int64
     public let kvBytesPerToken: Int64
     public let supportsTools: Bool
+    public let graph:ParticleGraphPlan?
+    public let supportsReasoning:Bool?
     public init(id: String, name: String, architecture: ModelArchitecture, artifact: ModelArtifact,
                 provenance: ModelProvenance, quantization: ModelQuantization, layers: Int, experts: Int,
-                activeExperts: Int, contextLimit: Int, sourceBytes: Int64, kvBytesPerToken: Int64, supportsTools: Bool) {
+                activeExperts: Int, contextLimit: Int, sourceBytes: Int64, kvBytesPerToken: Int64, supportsTools: Bool,graph:ParticleGraphPlan? = nil,supportsReasoning:Bool? = nil) {
         self.id = id; self.name = name; self.architecture = architecture; self.artifact = artifact
         self.provenance = provenance; self.quantization = quantization; self.layers = layers
         self.experts = experts; self.activeExperts = activeExperts; self.contextLimit = contextLimit
-        self.sourceBytes = sourceBytes; self.kvBytesPerToken = kvBytesPerToken; self.supportsTools = supportsTools
+        self.sourceBytes = sourceBytes; self.kvBytesPerToken = kvBytesPerToken; self.supportsTools = supportsTools;self.graph=graph;self.supportsReasoning=supportsReasoning
     }
     public static func identity(repository: String, revision: String, artifact: String) -> String {
         SHA256.hash(data: Data((repository+"\n"+revision+"\n"+artifact).utf8)).map { String(format: "%02x", $0) }.joined()
     }
-    public var expertRange:ClosedRange<Int> {(architecture == .sarvam ? min(2,activeExperts) : 1)...activeExperts}
+    public var expertRange:ClosedRange<Int> {(graph?.routingFields.isEmpty == true ? activeExperts : architecture == .sarvam ? min(2,activeExperts) : 1)...activeExperts}
     public func validate() throws {
         guard id.range(of:"^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}\\z",options:.regularExpression) != nil, !name.isEmpty, name.utf8.count <= 512,
               (1...512).contains(layers), (2...4096).contains(experts), (1...experts).contains(activeExperts),
               (128...4_194_304).contains(contextLimit), sourceBytes >= 0,sourceBytes <= Int64.max-2_147_483_648, kvBytesPerToken > 0 else {
             throw ModelLibraryError.invalid("Invalid model dimensions or identity.")
         }
+        if architecture == .mlxGraph {guard let graph else {throw ModelLibraryError.invalid("A graph model requires its compiled execution plan.")};try graph.validate()} else if graph != nil {throw ModelLibraryError.invalid("A graph plan must use the graph runtime.")}
         if let repo = provenance.repository { try HubRepository.validate(repo) }
         if let revision = provenance.revision { guard HubRepository.validRevision(revision) else { throw ModelLibraryError.invalid("A model must use an immutable source revision.") } }
     }

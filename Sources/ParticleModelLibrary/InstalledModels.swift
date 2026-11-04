@@ -16,6 +16,13 @@ public struct ModelRuntimeProfile: Codable, Equatable, Sendable {
         let ceiling = Int(min(Int64(model.contextLimit), kvBudget/model.kvBytesPerToken))
         context = [4096,8192,16384,32768,65536,131072,262144].last(where: {$0 <= ceiling}) ?? 4096
         if model.architecture == .sarvam {context=ParticleContextPolicy.recommended(physicalMemory:physicalMemory)}
+        if let graph=model.graph {
+            expertBytesPerSlot=graph.expertBytesPerSlot
+            slots=max(1,min(32,Int(Int64(physicalMemory/6)/graph.expertBytesPerSlot),graph.banks.values.max() ?? 32))
+            let remaining=max(0,Int64(physicalMemory)*2/3-graph.residentBytes-Int64(slots)*graph.expertBytesPerSlot-512*1024*1024)
+            let limit=min(kvBudget,remaining)/model.kvBytesPerToken
+            context=[4096,8192,16384,32768,65536,131072,262144].last(where:{$0 <= limit && $0 <= model.contextLimit}) ?? 4096
+        }
     }
 }
 

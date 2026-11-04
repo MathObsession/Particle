@@ -30,7 +30,7 @@ import ParticlePackCore
             let command = args[0];var values = [String:String]();var flags = Set<String>();var index = 1
             while index < args.count {
                 let key = args[index]
-                if ["--resume","--plan","--allow-unqualified-conversion"].contains(key) {guard flags.insert(key).inserted else {throw ModelLibraryError.invalid("Duplicate argument.")}}
+                if ["--resume","--plan","--allow-unqualified-conversion","--graph"].contains(key) {guard flags.insert(key).inserted else {throw ModelLibraryError.invalid("Duplicate argument.")}}
                 else {
                     guard ["--source","--repo","--revision","--output","--profile","--expected-source-id"].contains(key),index+1 < args.count,values[key] == nil else {throw ModelLibraryError.invalid("Unknown or incomplete argument: \(key).")}
                     index += 1;values[key] = args[index]
@@ -133,7 +133,7 @@ import ParticlePackCore
                 let metadata = ["config.json","model.safetensors.index.json","tokenizer.json","tokenizer_config.json","chat_template.jinja","generation_config.json","README.md","LICENSE","LICENSE.txt"].filter {FileManager.default.fileExists(atPath:root.appendingPathComponent($0).path)}
                 source = try LocalModelByteSource(root:root,paths:shards+metadata)
             }
-            let plan = try await MLXPackConverter.plan(source:source,provenance:provenance)
+            let plan = try await MLXPackConverter.plan(source:source,provenance:provenance,preferGraph:flags.contains("--graph"))
             if flags.contains("--plan") {try emit(plan);return}
             guard ArchitectureRegistry.report(plan.model).installable || flags.contains("--allow-unqualified-conversion") else {
                 throw ModelLibraryError.incompatible("This runtime is not qualified. Development conversion requires --allow-unqualified-conversion; the pack will remain unavailable in the public library.")

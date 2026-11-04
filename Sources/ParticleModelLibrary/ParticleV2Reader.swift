@@ -30,7 +30,8 @@ public final class ParticleV2Reader: @unchecked Sendable {
             let fd = try ParticleIO.openRelative(root:root,path:path);defer{close(fd)}
             if let expected=manifest.expertHashes[path],let stride=manifest.tensors.first(where:{$0.file == path && $0.layer != nil})?.expertStride {
                 var digest=SHA256()
-                for expert in 0..<manifest.model.experts {
+                let bank=manifest.tensors.first(where:{$0.file == path})?.layer
+                for expert in 0..<(bank.flatMap{manifest.model.graph?.banks[$0]} ?? manifest.model.experts) {
                     try Task.checkCancellation()
                     var data=Data(count:Int(stride))
                     try data.withUnsafeMutableBytes{try ParticleFileRange(descriptor:fd,offset:expert*Int(stride),count:Int(stride)).read(into:$0.baseAddress!)}
@@ -44,7 +45,7 @@ public final class ParticleV2Reader: @unchecked Sendable {
     }
     public func residentTensor(_ name: String) throws -> (ParticleV2Tensor,Data) {
         guard let tensor = tensorIndex[name],tensor.layer == nil,
-              tensor.bytes <= 512*1024*1024 else {throw ModelLibraryError.invalid("Missing or oversized resident tensor: \(name).")}
+              tensor.bytes <= (manifest.model.graph == nil ? 512*1024*1024 : min(Int64(2_147_483_648),Int64(ProcessInfo.processInfo.physicalMemory)/4)) else {throw ModelLibraryError.invalid("Missing or oversized resident tensor: \(name).")}
         let fd = try ParticleIO.openRelative(root:root,path:tensor.file);defer{close(fd)}
         var data = Data(count:Int(tensor.bytes))
         try data.withUnsafeMutableBytes {try ParticleFileRange(descriptor:fd,offset:Int(tensor.offset),count:Int(tensor.bytes)).read(into:$0.baseAddress!)}
@@ -57,13 +58,20 @@ public final class ParticleV2Reader: @unchecked Sendable {
             guard try ParticleIO.hashFile(descriptor:fd,size:Int(file.bytes)) == file.sha256 else {throw ModelLibraryError.checksum(name)}
         }
     }
-    public func expert(layer: Int, expert: Int) throws -> Data {
-        guard (0..<manifest.model.experts).contains(expert),let tensor = manifest.tensors.first(where: {$0.layer == layer}),
-              let stride = tensor.expertStride,stride <= 32*1024*1024,
+    public func expert(layer: Int, expert: Int,cancelled:@Sendable ()->Bool = {false}) throws -> Data {
+        guard (0..<(manifest.model.graph?.banks[layer] ?? manifest.model.experts)).contains(expert),let tensor = manifest.tensors.first(where: {$0.layer == layer}),
+              let stride = tensor.expertStride,stride <= (manifest.model.graph == nil ? 32 : 256)*1024*1024,
               let expected = manifest.expertHashes[tensor.file]?[expert] else {throw ModelLibraryError.invalid("Invalid expert selection.")}
         let fd = try ParticleIO.openRelative(root:root,path:tensor.file);defer{close(fd)}
-        var data = Data(count:Int(stride))
-        try data.withUnsafeMutableBytes {try ParticleFileRange(descriptor:fd,offset:expert*Int(stride),count:Int(stride)).read(into:$0.baseAddress!)}
+        if cancelled() {throw CancellationError()}
+        var data=Data(count:Int(stride))
+        try data.withUnsafeMutableBytes {buffer in
+            for offset in Swift.stride(from:0,to:Int(stride),by:8*1024*1024) {
+                if cancelled() {throw CancellationError()}
+                let count=min(8*1024*1024,Int(stride)-offset)
+                try ParticleFileRange(descriptor:fd,offset:expert*Int(stride)+offset,count:count).read(into:buffer.baseAddress!.advanced(by:offset))
+            }
+        }
         guard ParticleIO.hash(data) == expected else {throw ModelLibraryError.checksum("\(tensor.file), expert \(expert)")}
         return data
     }

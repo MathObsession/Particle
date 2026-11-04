@@ -105,6 +105,9 @@ final class ExpertStore {
     static func dtype(_ value: String) throws -> DType {
         switch value {
         case "U32": .uint32
+        case "U8": .uint8
+        case "I32": .int32
+        case "U16": .uint16
         case "F32": .float32
         case "F16": .float16
         case "BF16": .bfloat16

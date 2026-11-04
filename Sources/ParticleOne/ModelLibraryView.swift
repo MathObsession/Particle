@@ -83,7 +83,7 @@ struct ModelLibraryView: View {
                     }
                 }
             }
-            Text("Install automatically inspects native tensors, builds a streamed .particle pack and verifies it. Supported now: Sarvam, Qwen3 MoE and text-only Qwen3.5 MoE with MLX affine weights. Other families show the missing adapter or format instead of disappearing.").font(Design.body(11)).foregroundStyle(Design.muted).lineSpacing(4)
+            Text("Particle automatically inspects the backend graph, identifies expert matrix operations and compiles a streamed .particle execution plan. Models with unsupported graph operations, tensor layouts or tokenizers show a specific explanation.").font(Design.body(11)).foregroundStyle(Design.muted).lineSpacing(4)
             if library.next != nil {Button("Load more"){library.discover(loadMore:true)}.buttonStyle(HitButtonStyle()).disabled(library.searching)}
         }
     }
@@ -96,6 +96,7 @@ struct ModelLibraryView: View {
                             Text(listing.descriptor.provenance.repository ?? "Local model").font(Design.body(10)).foregroundStyle(Design.muted)
                             if recommended,let reason=ModelRecommendations.reason(for:listing.descriptor) {Text(reason).font(Design.body(11)).foregroundStyle(Design.muted).fixedSize(horizontal:false,vertical:true)}
                             Text("\(listing.descriptor.layers) layers · \(listing.descriptor.experts) total experts").font(Design.body(10)).foregroundStyle(Design.muted)
+                            if let graph=listing.descriptor.graph {Text("Automatically adapted · \(graph.projections.count) streamed expert projections").font(Design.body(10)).foregroundStyle(Design.green)}
                             Text("\(listing.descriptor.activeExperts) active experts · \(listing.descriptor.quantization.label)").font(Design.body(11))
                             Text(ByteCountFormatter.string(fromByteCount:listing.descriptor.sourceBytes,countStyle:.file)+" download · "+(listing.descriptor.provenance.license ?? "See model license")).font(Design.body(10)).foregroundStyle(Design.muted)
                             Text("Allow "+ByteCountFormatter.string(fromByteCount:listing.descriptor.sourceBytes+2_147_483_648,countStyle:.file)+" free for installation").font(Design.body(10)).foregroundStyle(Design.muted)

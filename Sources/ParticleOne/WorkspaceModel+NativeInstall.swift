@@ -108,7 +108,7 @@ extension WorkspaceModel {
                         defer{self.libraryInstallJob = nil}
                         if status == 0 {
                             do {
-                                let report = try ArchitectureRegistry.inspectLocal(destination)
+                                let report = try await Task.detached{try ArchitectureRegistry.inspectLocal(destination)}.value
                                 let convertedGGUF=localSource?.pathExtension.lowercased() == "gguf"
                                 guard report.installable,let actual=report.descriptor,actual.architecture == descriptor.architecture,convertedGGUF || actual.id == descriptor.id else {throw ModelLibraryError.invalid("The converted model does not match this installation.")}
                                 guard self.library.register(actual,path:destination.path,managed:!verifyingOriginal) else {throw ModelLibraryError.invalid("The model was verified, but its library record could not be saved. The model files were preserved.")}

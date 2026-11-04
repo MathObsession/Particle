@@ -78,3 +78,24 @@ No trained Qwen3 quality/speed or exhaustive quantization-grid benchmark is clai
 Unknown architectures still require an executable graph adapter.
 
 Release build `20261104140233`; archive SHA-256 `1aeef69d7077371cce03d29075247cbbaa5a365ba80c46a0beea349193872d53`.
+
+## 0.5.0: operation-level graph adaptation
+
+Implemented backend-bound graph compilation, inferred byte-preserving tensor
+normalization/assembly, v3 plans and paged projection execution across trusted
+MLX graphs. Native mixed quantization, biased projections, per-bank expert counts,
+bounded reads/leases, graph-derived profiles and channel-framed chat are included.
+Sarvam and existing v1/v2 paths remain intact. Mixtral and GPT-OSS starter cards
+are metadata-inspected through the same compiler, not a family allowlist.
+
+Three synthetic layouts passed exact payload checks (31 Mixtral, 33 OLMoE,
+24 MXFP4 tensors), unchanged-source checks and two-step alternating full-logit /
+continuation checks with zero differences. Real Mixtral and GPT-OSS metadata
+passed without weight downloads. Full trained-model quality, long-context
+endurance and universal throughput are not claimed. Long benchmarks were not
+repeated, following the user's request. See `docs/PARTICLE_GRAPH_COMPILER.md`.
+
+Release build `20261104161646`; archive SHA-256 `b152adf62d75068bfa4314d2837239d3db5a0c31cb7f6c6c62fb870cda9a18a8`.
+The packaged compiler and a tiny sampled chat passed with developer paths
+removed. Six focused channel-framing checks and the SwiftUI source/probe
+guards passed. No full model weights were downloaded for these checks.

@@ -31,7 +31,8 @@ public enum ArchitectureRegistry {
     public static let adapters: [ArchitectureAdapter] = [
         .init(architecture: .sarvam, worker: "ParticleCLI", qualification: .qualified, supportsTools: true),
         .init(architecture: .qwen35MoE, worker: "ParticleMLXCLI", qualification: .qualified, supportsTools: false),
-        .init(architecture: .qwen3MoE, worker: "ParticleMLXCLI", qualification: .qualified, supportsTools: false)
+        .init(architecture: .qwen3MoE, worker: "ParticleMLXCLI", qualification: .qualified, supportsTools: false),
+        .init(architecture: .mlxGraph, worker: "ParticleMLXCLI", qualification: .qualified, supportsTools: false)
     ]
     public static func adapter(for architecture: ModelArchitecture) -> ArchitectureAdapter {
         adapters.first { $0.architecture == architecture }!
@@ -97,7 +98,7 @@ public enum ArchitectureRegistry {
         }
         guard Set(tensors.keys) == Set(map.keys) else { throw ModelLibraryError.invalid("Checkpoint tensors are missing.") }
         let tokenizer = try boundedData(url.appendingPathComponent("tokenizer.json"), limit: 64*1024*1024)
-        try validateChronosTokenizer(tokenizer:tokenizer,configuration:boundedData(url.appendingPathComponent("tokenizer_config.json"),limit:1_048_576))
+        try validateGraphTokenizer(tokenizer:tokenizer,configuration:boundedData(url.appendingPathComponent("tokenizer_config.json"),limit:1_048_576))
         let templateURL = url.appendingPathComponent("chat_template.jinja")
         let template:String
         if FileManager.default.fileExists(atPath:templateURL.path) {template=String(decoding:try boundedData(templateURL,limit:262_144),as:UTF8.self)}
@@ -112,23 +113,23 @@ public enum ArchitectureRegistry {
     }
 
     public static func validateV2Envelope(_ data:Data) throws {
-        guard let object=try JSONSerialization.jsonObject(with:data) as? [String:Any],object["versionMajor"] as? Int == 2,
-              let model=object["model"] as? [String:Any],[ModelArchitecture.qwen35MoE.rawValue,ModelArchitecture.qwen3MoE.rawValue].contains(model["architecture"] as? String ?? "") else {
+        guard let object=try JSONSerialization.jsonObject(with:data) as? [String:Any],[2,3].contains(object["versionMajor"] as? Int ?? 0),
+              let model=object["model"] as? [String:Any],[ModelArchitecture.qwen35MoE.rawValue,ModelArchitecture.qwen3MoE.rawValue,ModelArchitecture.mlxGraph.rawValue].contains(model["architecture"] as? String ?? "") else {
             throw ModelLibraryError.incompatible("This pack’s format or architecture is unsupported. Sarvam uses Particle’s v1 default pack; additional native packs require a supported MLX MoE v2 graph.")
         }
     }
     public static func inspectV2Metadata(_ manifest:ParticleV2Manifest,configuration:Data,tokenizer:Data,tokenizerConfiguration:Data,template:Data) throws -> CompatibilityReport {
         try manifest.validate();try validateChronosLayout(manifest)
-        try validateChronosTokenizer(tokenizer:tokenizer,configuration:tokenizerConfiguration)
-        let records=Dictionary(uniqueKeysWithValues:manifest.tensors.map{($0.name,SafetensorRecord(name:$0.name,dtype:$0.dtype,shape:$0.shape,offset:0,bytes:$0.bytes))})
-        let checked=try inspectMLX(configuration:configuration,tensors:records,template:String(decoding:template,as:UTF8.self),
-            repository:manifest.model.provenance.repository,revision:manifest.model.provenance.revision,
-            sourceBytes:manifest.model.sourceBytes,license:manifest.model.provenance.license)
+        if manifest.model.graph == nil {try validateChronosTokenizer(tokenizer:tokenizer,configuration:tokenizerConfiguration)} else {try validateGraphTokenizer(tokenizer:tokenizer,configuration:tokenizerConfiguration)}
+        let records=Dictionary(uniqueKeysWithValues:manifest.tensors.map{($0.name,SafetensorRecord(name:$0.name,dtype:$0.dtype,shape:$0.shape,offset:0,bytes:$0.bytes*Int64($0.layer == nil ? 1 : manifest.model.graph?.banks[$0.layer!] ?? manifest.model.experts)))})
+        let checked:CompatibilityReport
+        if manifest.model.graph != nil {checked=try inspectCompiledGraph(configuration:configuration,tensors:Dictionary(uniqueKeysWithValues:manifest.model.graph!.originalTensors(Array(records.values)).map{($0.name,$0)}),template:String(decoding:template,as:UTF8.self),repository:manifest.model.provenance.repository,revision:manifest.model.provenance.revision,sourceBytes:manifest.model.sourceBytes,license:manifest.model.provenance.license)}
+        else {checked=try inspectMLX(configuration:configuration,tensors:records,template:String(decoding:template,as:UTF8.self),repository:manifest.model.provenance.repository,revision:manifest.model.provenance.revision,sourceBytes:manifest.model.sourceBytes,license:manifest.model.provenance.license)}
         guard checked.conversionSupported,let expected=checked.descriptor,
               expected.architecture == manifest.model.architecture,expected.layers == manifest.model.layers,
               expected.experts == manifest.model.experts,expected.activeExperts == manifest.model.activeExperts,
               expected.quantization == manifest.model.quantization,expected.contextLimit == manifest.model.contextLimit,
-              expected.kvBytesPerToken == manifest.model.kvBytesPerToken,!manifest.model.supportsTools,
+              expected.kvBytesPerToken == manifest.model.kvBytesPerToken,expected.graph == manifest.model.graph,!manifest.model.supportsTools,
               manifest.model.id != ModelDescriptor.sarvam.id,
               manifest.model.provenance.repository == nil || expected.id == manifest.model.id else {
             return .unsupported("The pack descriptor does not match its configuration and tensor graph.")
@@ -138,13 +139,18 @@ public enum ArchitectureRegistry {
 
     public static func validateChronosLayout(_ manifest:ParticleV2Manifest) throws {
         for tensor in manifest.tensors {
-            guard tensor.layer == MoEModelSchema.routedLayer(tensor.name) else {throw ModelLibraryError.invalid("Tensor layer ownership does not match its model name: \(tensor.name).")}
+            let expected=manifest.model.graph != nil ? manifest.model.graph!.bank(for:tensor.name) : MoEModelSchema.routedLayer(tensor.name)
+            guard tensor.layer == expected else {throw ModelLibraryError.invalid("Tensor layer ownership does not match its model name: \(tensor.name).")}
         }
     }
     public static func configurationIncompatibility(_ configuration:Data) throws -> String? {
-        do {_=try MoEModelSchema(configuration:configuration);return nil}
-        catch let error as ModelLibraryError {return error.localizedDescription}
+        guard let root=try JSONSerialization.jsonObject(with:configuration) as? [String:Any],let type=root["model_type"] as? String,!type.isEmpty else {return "The checkpoint has no model_type or executable graph contract."}
+        if let quant=(root["quantization"] ?? root["quantization_config"]) as? [String:Any],let bits=quant["bits"] as? Int,![2,3,4,5,6,8].contains(bits) {return "Choose a supported native affine-quantized or microscaling bit width."}
+        // Family-specific checks are a fast path, not a discovery allowlist.
+        // Other layouts are compiled from the backend's actual typed graph.
+        return nil
     }
+
     public static func inspectMLX(configuration: Data, tensors: [String: SafetensorRecord], template: String,
                                   repository: String?, revision: String?, sourceBytes: Int64, license: String? = nil, sourceIdentity: String? = nil) throws -> CompatibilityReport {
         do {
@@ -158,9 +164,29 @@ public enum ArchitectureRegistry {
                 layers:schema.layers,experts:schema.experts,activeExperts:schema.active,contextLimit:schema.context,sourceBytes:sourceBytes,
                 kvBytesPerToken:Int64(schema.fullAttentionLayers.count)*Int64(schema.kvHeads)*Int64(schema.headDim)*8,supportsTools:false)
             try descriptor.validate();return report(descriptor)
-        } catch let error as ModelLibraryError {return .unsupported(error.localizedDescription)}
+        } catch {
+            do {return try inspectCompiledGraph(configuration:configuration,tensors:tensors,template:template,repository:repository,revision:revision,sourceBytes:sourceBytes,license:license,sourceIdentity:sourceIdentity)}
+            catch {return .unsupported(error.localizedDescription)}
+        }
     }
 
+    public static func inspectCompiledGraph(configuration:Data,tensors:[String:SafetensorRecord],template:String,repository:String?,revision:String?,sourceBytes:Int64,license:String? = nil,sourceIdentity:String? = nil) throws -> CompatibilityReport {
+        guard !template.isEmpty,template.utf8.count <= 262_144 else {return .unsupported("A model chat template is required.")}
+        let plan=try GraphCompilationClient.compile(configuration:configuration,tensors:Array(tensors.values))
+        let root=try JSONSerialization.jsonObject(with:configuration) as? [String:Any] ?? [:]
+        let quant=(root["quantization"] ?? root["quantization_config"]) as? [String:Any] ?? [:]
+        let id=repository.flatMap{repo in revision.map{ModelDescriptor.identity(repository:repo,revision:$0,artifact:"particle-graph-1")}} ?? "local:"+ModelDescriptor.identity(repository:"local",revision:sourceIdentity ?? plan.configurationSHA256,artifact:"particle-graph-1")
+        let overrides=quant.compactMapValues{($0 as? [String:Any])?["bits"] as? Int}
+        let descriptor=ModelDescriptor(id:id,name:repository?.split(separator:"/").last.map(String.init) ?? "Imported MoE graph",architecture:.mlxGraph,artifact:.mlx,
+            provenance:.init(repository:repository,revision:revision,license:license),quantization:.init(scheme:"Native graph",bits:quant["bits"] as? Int,groupSize:quant["group_size"] as? Int,overrides:overrides),
+            layers:plan.hiddenLayers,experts:plan.banks.values.max() ?? 2,activeExperts:plan.nativeExperts,contextLimit:plan.contextLimit,sourceBytes:sourceBytes,kvBytesPerToken:plan.kvBytesPerToken,supportsTools:false,graph:plan,supportsReasoning:(template.contains("enable_thinking") && template.contains("<think>")) || (template.contains("<|channel|>") && template.contains("<|message|>")))
+        try descriptor.validate();return report(descriptor)
+    }
+    public static func validateGraphTokenizer(tokenizer:Data,configuration:Data) throws {
+        guard let root=try JSONSerialization.jsonObject(with:tokenizer) as? [String:Any],let model=root["model"] as? [String:Any],
+              ["BPE","Unigram","WordPiece"].contains(model["type"] as? String ?? ""),
+              let config=try JSONSerialization.jsonObject(with:configuration) as? [String:Any],config["auto_map"] == nil || config["auto_map"] is NSNull else {throw ModelLibraryError.incompatible("The tokenizer needs a bundled native implementation; remote tokenizer code is not executed.")}
+    }
     public static func report(_ descriptor: ModelDescriptor) -> CompatibilityReport {
         let adapter = adapter(for: descriptor.architecture)
         return .init(descriptor: descriptor, conversionSupported: true,

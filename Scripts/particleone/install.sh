@@ -2,11 +2,11 @@
 # Particle's public tester installer. Uses only tools included with macOS.
 set -euo pipefail
 
-version='0.4.1'
-build='20261104140233'
-archive='Particle-0.4.1-20261104140233-arm64.zip'
-sha256='1aeef69d7077371cce03d29075247cbbaa5a365ba80c46a0beea349193872d53'
-base='https://github.com/MathObsession/Particle/releases/download/v0.4.1'
+version='0.5.0'
+build='20261104161646'
+archive='Particle-0.5.0-20261104161646-arm64.zip'
+sha256='b152adf62d75068bfa4314d2837239d3db5a0c31cb7f6c6c62fb870cda9a18a8'
+base='https://github.com/MathObsession/Particle/releases/download/v0.5.0'
 identity='app.particleone.desktop'
 verify_only=false
 case "${1:-}" in

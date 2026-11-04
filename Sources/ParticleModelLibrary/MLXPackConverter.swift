@@ -40,7 +40,7 @@ public enum MLXPackConverter {
         }
         return data
     }
-    public static func plan(source: any ModelByteSource, provenance: ModelProvenance = .init()) async throws -> MLXPackPlan {
+    public static func plan(source: any ModelByteSource, provenance: ModelProvenance = .init(),preferGraph:Bool=false) async throws -> MLXPackPlan {
         let config = try await metadata(source,path:"config.json",limit:1_048_576)
         if let reason=try ArchitectureRegistry.configurationIncompatibility(config) {throw ModelLibraryError.incompatible(reason)}
         let map:[String:String]
@@ -86,39 +86,54 @@ public enum MLXPackConverter {
             guard let config=try JSONSerialization.jsonObject(with:data) as? [String:Any],let text=config["chat_template"] as? String,!text.isEmpty,text.utf8.count <= 262_144 else {throw ModelLibraryError.incompatible("No supported chat template was found in the checkpoint.")}
             template=Data(text.utf8);generated["tokenizer/chat_template.jinja"]=template
         }
-        try await ArchitectureRegistry.validateChronosTokenizer(tokenizer:metadata(source,path:"tokenizer.json",limit:64*1024*1024),configuration:metadata(source,path:"tokenizer_config.json",limit:1_048_576))
+        try await ArchitectureRegistry.validateGraphTokenizer(tokenizer:metadata(source,path:"tokenizer.json",limit:64*1024*1024),configuration:metadata(source,path:"tokenizer_config.json",limit:1_048_576))
         let total = try shardFiles.reduce(Int64(0)) { value,file in
             let (sum,overflow) = value.addingReportingOverflow(file.bytes); guard !overflow else { throw ModelLibraryError.invalid("Checkpoint size overflow.") }; return sum
         }
-        let report = try ArchitectureRegistry.inspectMLX(configuration:config,tensors:records,template:String(decoding:template,as:UTF8.self),
-            repository:provenance.repository,revision:provenance.revision,sourceBytes:total,license:provenance.license,sourceIdentity:source.identity)
+        let report:CompatibilityReport
+        if preferGraph {report=try ArchitectureRegistry.inspectCompiledGraph(configuration:config,tensors:records,template:String(decoding:template,as:UTF8.self),repository:provenance.repository,revision:provenance.revision,sourceBytes:total,license:provenance.license,sourceIdentity:source.identity)}
+        else {report=try ArchitectureRegistry.inspectMLX(configuration:config,tensors:records,template:String(decoding:template,as:UTF8.self),repository:provenance.repository,revision:provenance.revision,sourceBytes:total,license:provenance.license,sourceIdentity:source.identity)}
         guard report.conversionSupported,let model = report.descriptor else { throw ModelLibraryError.incompatible(report.reason) }
+        let originalRecords=records
+        if let graph=model.graph {records=Dictionary(uniqueKeysWithValues:graph.canonicalTensors(Array(records.values)).map{($0.name,$0)})}
         var ranges = [MLXPackCopyRange](); var tensors = [ParticleV2Tensor](); var sizes:[String:Int64] = ["common.bin":0]
         func align(_ n:Int64,to:Int = 256) throws -> Int64 { Int64(try ParticleFormat.aligned(Int(n),to:to)) }
-        func routedLayer(_ name:String) -> Int? {MoEModelSchema.routedLayer(name)}
+        func routedLayer(_ name:String) -> Int? {if let graph=model.graph{return graph.bank(for:name)};return MoEModelSchema.routedLayer(name)}
+        func appendCopies(_ record:SafetensorRecord,start:Int64,count:Int64,file:String,destination:Int64) throws {
+            let names=model.graph?.assemblies.first(where:{$0.target.name == record.name})?.sources.map(\.name) ?? [record.name]
+            var offset:Int64=0,copied:Int64=0
+            for name in names {
+                guard let source=originalRecords[name],let shard=map[name] else {throw ModelLibraryError.invalid("A normalized tensor source is missing.")}
+                let end=offset+source.bytes,from=max(start,offset),to=min(start+count,end)
+                if from < to {ranges.append(.init(source:shard,offset:source.offset+from-offset,bytes:to-from,file:file,destination:destination+from-start));copied += to-from}
+                offset=end
+            }
+            guard copied == count else {throw ModelLibraryError.invalid("Normalization does not cover its destination bytes.")}
+        }
         for record in records.values.sorted(by: {$0.name < $1.name}) where routedLayer(record.name) == nil {
             let offset = try align(sizes["common.bin"]!)
             sizes["common.bin"] = offset+record.bytes
             tensors.append(.init(name:record.name,dtype:record.dtype,shape:record.shape,file:"common.bin",offset:offset,bytes:record.bytes))
-            ranges.append(.init(source:map[record.name]!,offset:record.offset,bytes:record.bytes,file:"common.bin",destination:offset))
+            try appendCopies(record,start:0,count:record.bytes,file:"common.bin",destination:offset)
         }
-        for layer in 0..<model.layers {
+        for layer in model.graph?.banks.keys.sorted() ?? Array(0..<model.layers) {
             let group = records.values.filter { routedLayer($0.name) == layer }.sorted { $0.name < $1.name }
-            guard group.count == 9 else { throw ModelLibraryError.invalid("Each layer requires three complete quantized expert projections.") }
+            let experts=model.graph?.banks[layer] ?? model.experts
+            guard group.count == (model.graph?.projections.filter{$0.bank == layer}.flatMap(\.tensors).count ?? 9) else { throw ModelLibraryError.invalid("Each layer requires three complete quantized expert projections.") }
             var stride: Int64 = 0; var offsets = [String:Int64]()
             for record in group {
-                guard record.shape.first == model.experts, record.bytes % Int64(model.experts) == 0 else { throw ModelLibraryError.invalid("Expert tensor cannot be split losslessly.") }
-                stride = try align(stride); offsets[record.name] = stride; stride += record.bytes/Int64(model.experts)
+                guard record.shape.first == experts, record.bytes % Int64(experts) == 0 else { throw ModelLibraryError.invalid("Expert tensor cannot be split losslessly.") }
+                stride = try align(stride); offsets[record.name] = stride; stride += record.bytes/Int64(experts)
             }
             stride = try align(stride,to:16_384)
-            guard stride <= 32*1024*1024 else { throw ModelLibraryError.invalid("Expert blob exceeds the bounded runtime capacity.") }
+            guard stride <= (model.graph == nil ? 32 : 256)*1024*1024 else { throw ModelLibraryError.invalid("Expert blob exceeds the bounded runtime capacity.") }
             let path = String(format:"experts/layer_%03d.bin",layer)
-            sizes[path] = stride*Int64(model.experts)
+            sizes[path] = stride*Int64(experts)
             for record in group {
-                let bytes = record.bytes/Int64(model.experts), offset = offsets[record.name]!
+                let bytes = record.bytes/Int64(experts), offset = offsets[record.name]!
                 tensors.append(.init(name:record.name,dtype:record.dtype,shape:record.shape,file:path,offset:offset,bytes:bytes,layer:layer,expertStride:stride))
-                for expert in 0..<model.experts {
-                    ranges.append(.init(source:map[record.name]!,offset:record.offset+Int64(expert)*bytes,bytes:bytes,file:path,destination:Int64(expert)*stride+offset))
+                for expert in 0..<experts {
+                    try appendCopies(record,start:Int64(expert)*bytes,count:bytes,file:path,destination:Int64(expert)*stride+offset)
                 }
             }
         }
@@ -134,6 +149,7 @@ public enum MLXPackConverter {
             sources.append(file); sizes[destination] = file.bytes
             ranges.append(.init(source:name,offset:0,bytes:file.bytes,file:destination,destination:0))
         }
+        if let graph=model.graph {generated["execution-plan.json"]=try JSONEncoder().encode(graph)}
         for (path,data) in generated {sizes[path]=Int64(data.count)}
         return MLXPackPlan(model:model,sourceFiles:sources.sorted {$0.path < $1.path},payloadSizes:sizes,tensors:tensors.sorted {$0.name < $1.name},
                            ranges:ranges.sorted { ($0.source,$0.offset) < ($1.source,$1.offset) },generatedFiles:generated.isEmpty ? nil : generated)
@@ -333,7 +349,7 @@ public enum MLXPackConverter {
         }
         guard committedIndex == checkpoint.chunks.count else {throw ModelLibraryError.invalid("Unexpected conversion checkpoint suffix.")}
         for (path,data) in plan.generatedFiles ?? [:] {
-            guard path == "tokenizer/chat_template.jinja",data.count <= 262_144,Int64(data.count) == plan.payloadSizes[path],let fd=outputs[path] else {throw ModelLibraryError.invalid("Invalid derived chat template.")}
+            guard ["tokenizer/chat_template.jinja","execution-plan.json"].contains(path),data.count <= 4*1024*1024,Int64(data.count) == plan.payloadSizes[path],let fd=outputs[path] else {throw ModelLibraryError.invalid("Invalid derived chat template.")}
             try write(fd,0,data);guard fsync(fd) == 0 else {throw ModelLibraryError.invalid("Could not synchronize the derived template.")}
         }
         var files = [String:ParticleV2File]();var expertHashes = [String:[String]]()
@@ -342,7 +358,9 @@ public enum MLXPackConverter {
             let fd = outputs[path]!,size = plan.payloadSizes[path]!
             if let stride = plan.tensors.first(where: {$0.file == path && $0.layer != nil})?.expertStride {
                 var digest = SHA256();var hashes = [String]()
-                for expert in 0..<plan.model.experts {
+                let bank=plan.tensors.first(where:{$0.file == path})?.layer
+                let experts=bank.flatMap{plan.model.graph?.banks[$0]} ?? plan.model.experts
+                for expert in 0..<experts {
                     try Task.checkCancellation()
                     var data = Data(count:Int(stride))
                     try data.withUnsafeMutableBytes {try ParticleFileRange(descriptor:fd,offset:expert*Int(stride),count:Int(stride)).read(into:$0.baseAddress!)}

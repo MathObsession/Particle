@@ -213,10 +213,10 @@ struct ParticleOneRootView: View {
     private func beginEditing(_ message:ChatMessage){guard model.conversationUsesCurrentModel else{model.showModelLibrary=true;return};guard let id=model.state.selected else{return};editingRequest=MessageEditRequest(conversationID:id,message:message)}
     private var thinkingToggle:some View {
         Button{model.setThinkingEnabled(!model.thinkingEnabled)}label:{
-            HStack(spacing:6){Image(systemName:model.thinkingEnabled ? "sparkle" : "bolt");Text(model.thinkingEnabled ? "Thinking" : "Instant")}
+            HStack(spacing:6){Image(systemName:model.thinkingEnabled ? "sparkle" : "bolt");Text(!model.supportsThinkingControl ? "Model default" : model.thinkingEnabled ? "Thinking" : "Instant")}
                 .font(Design.medium(11)).foregroundStyle(model.thinkingEnabled ? Design.green : Design.muted)
                 .padding(.horizontal,11).frame(height:34).background(model.thinkingEnabled ? Design.green.opacity(0.12) : Design.line.opacity(0.24),in:Capsule()).contentShape(Capsule())
-        }.buttonStyle(.plain).disabled(model.busy || model.loading || !model.conversationUsesCurrentModel)
+        }.buttonStyle(.plain).disabled(model.busy || model.loading || !model.conversationUsesCurrentModel || !model.supportsThinkingControl)
             .accessibilityLabel("Response mode").accessibilityValue(model.thinkingEnabled ? "Thinking" : "Instant")
             .help(model.busy || model.loading ? "Wait for this response or stop it before changing thinking." : "Switch between Instant answers and Thinking for the next reply.")
     }

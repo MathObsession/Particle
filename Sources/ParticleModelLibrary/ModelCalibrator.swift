@@ -19,7 +19,7 @@ public enum ModelCalibrator {
         guard ArchitectureRegistry.report(model.descriptor).installable,model.path.hasSuffix(".particle") else {throw ModelLibraryError.incompatible("Optimize for this Mac requires a qualified native pack.")}
         let baseline=model.profile
         guard [1,2,4].contains(baseline.readWorkers),[32,64,128].contains(baseline.prefillChunk),
-              (model.descriptor.architecture == .sarvam ? 6...16 : 8...32).contains(baseline.slots),
+              (model.descriptor.architecture == .sarvam ? 6...16 : model.descriptor.graph == nil ? 8...32 : 1...32).contains(baseline.slots),
               model.descriptor.expertRange.contains(baseline.activeExperts),baseline.context >= 4096 else {throw ModelLibraryError.invalid("The saved execution profile is invalid.")}
         let worker=engines.appendingPathComponent(ArchitectureRegistry.adapter(for:model.descriptor.architecture).worker)
         guard FileManager.default.isExecutableFile(atPath:worker.path) else {throw ModelLibraryError.invalid("The bundled model worker is missing.")}

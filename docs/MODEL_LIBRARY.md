@@ -1,24 +1,25 @@
 # Automatic MoE conversion and model library
 
-Particle 0.4.1 replaces the Chronos-only conversion gate with a configuration-driven recipe. A repository name is not a compatibility allowlist.
+Particle 0.5.0 extends configuration-driven recipes with an operation-level MoE graph compiler. A repository name is not a compatibility allowlist.
 
 Search a model name or paste its public Hugging Face URL. Particle resolves an immutable revision, reads configuration and bounded tensor headers, detects the graph and native mixed quantization, then offers Install when its bundled runtime can execute that graph. Unsupported search results remain visible with the specific missing adapter or format. Model cards do not execute code.
 
 Install streams source ranges into a `.particle` pack, groups routed tensors into contiguous layer/expert blobs, keeps common tensors separate, preserves the source quantized bytes, and verifies source, payload and expert hashes. It supports indexed shards and single-file safetensors, and extracts an embedded template from tokenizer_config.json when no separate template is supplied. Originals are retained. Existing v1/v2 packs and resumable transfers remain supported.
 
-## Current runtime families
+## Automatic graph execution
 
-| Family | Accepted input | Execution |
-| --- | --- | --- |
-| Sarvam | Existing supported GGUF / v1 Particle | Existing Churo Chat and Code default |
-| Qwen3 MoE | MLX affine safetensors, packed switch_mlp banks | Configuration-driven upstream graph, streamed experts; early-access Chat |
-| Qwen3.5 MoE | Text-only MLX affine safetensors, packed switch_mlp banks | Configuration-driven upstream hybrid-attention graph, streamed experts; early-access Chat |
+Existing Sarvam and Qwen3/Qwen3.5 v1/v2 paths remain intact. New models can use the
+v3 graph compiler across the trusted bundled MLX graph registry. It discovers routed
+projection operations, infers checkpoint assembly from the backend's lazy normalization
+graph, and preserves native affine or supported floating-point quantized bytes.
+Mixtral's unstacked experts, OLMoE's graph and native MXFP4 have focused synthetic
+conversion/reference coverage. Real Mixtral and GPT-OSS metadata inspection passed.
 
-The MLX recipes accept affine 2/3/4/5/6/8-bit weights and group sizes 32/64/128, preserving module-specific precision, raw routing tensors and quantization overrides. Dimensions, vocabulary, layer count, expert count, native top-k, attention heads, context accounting and recurrent schedule come from configuration and are checked against the complete tensor graph. The source BPE/ByteLevel tokenizer and Jinja chat template are used; the tokenizer is not pinned to a single checkpoint hash. No whole expert matrix is expanded into floating point.
-
-The generic runtime keeps the original upstream router, shared branch and reduction, replacing the expert-bank leaf with bounded demand reads and LFU reuse. Cache eviction cannot overwrite arrays held by outstanding GPU operations. The bundled MLX dependencies remain pinned to Swift LM 3.32.3 / MLX Swift 0.32.3, with FoundationModels disabled.
-
-**This is not arbitrary architecture synthesis.** A new attention/routing architecture needs an executable graph adapter; repacking bytes cannot infer its mathematical operations. Mixtral, DeepSeek, GPT-OSS, unknown GGUF families, vision/audio and repository-defined code are not enabled by changing a filename. Search explains these limits instead of silently hiding results. No universal speed or quality guarantee is made.
+A repository name is not an allowlist. Conversely, membership in the backend registry
+alone is insufficient: the complete graph, parameter inventory, normalization,
+tokenizer/template and memory checks must pass. Unknown operators and custom remote
+code remain unsupported. This does not synthesize arbitrary new mathematics from
+weight names. See [the compiler design and limits](PARTICLE_GRAPH_COMPILER.md).
 
 ## Experts and profiles
 
@@ -40,4 +41,4 @@ The app bundles conversion, runtime and shaders; testers need neither Xcode nor 
 - A tiny synthetic Qwen3 checkpoint converted losslessly from one safetensors file, with 4-bit/group-32 weights, raw router and an embedded template. Its full-logit/continuation comparison against upstream selected-expert execution had zero differences over two steps. This is a graph integration check, not trained-model quality or speed qualification.
 - Chronos metadata regression and model-specific expert-range checks are retained. No exhaustive benchmark matrix is rerun for this update, per user instruction.
 
-Further families can reuse the conversion scheduler and pack layout after adding their graph/schema adapter. They must not be marked runnable simply because a converter can write their tensors.
+The generic compiler can adapt additional bundled graphs without Particle family recipes. Unsupported operators still need an executable backend implementation; successful repacking alone never qualifies runtime correctness or speed.
