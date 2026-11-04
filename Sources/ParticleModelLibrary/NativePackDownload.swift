@@ -19,6 +19,7 @@ public enum NativePackDownload {
             var digest=Insecure.SHA1();digest.update(data:Data("blob \(record.bytes)\0".utf8));digest.update(data:raw)
             guard digest.finalize().map({String(format:"%02x",$0)}).joined() == expected else {throw ModelLibraryError.checksum("manifest.json")}
         }
+        try ArchitectureRegistry.validateV2Envelope(raw)
         let manifest=try JSONDecoder().decode(ParticleV2Manifest.self,from:raw)
         try manifest.validate()
         func metadata(_ name:String,_ limit:Int) async throws -> Data {

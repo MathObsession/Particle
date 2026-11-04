@@ -53,6 +53,7 @@ public enum ArchitectureRegistry {
                 return .init(descriptor: descriptor, conversionSupported: true, runtimeAvailable: true,
                              qualification: .qualified, reason: "Validated native Sarvam pack.")
             }
+            try validateV2Envelope(data)
             let reader = try ParticleV2Reader(path:url)
             let manifest = reader.manifest
             return try inspectV2Metadata(manifest,
@@ -91,6 +92,12 @@ public enum ArchitectureRegistry {
                               repository: nil, revision: nil, sourceBytes: bytes, sourceIdentity:source.identity)
     }
 
+    public static func validateV2Envelope(_ data:Data) throws {
+        guard let object=try JSONSerialization.jsonObject(with:data) as? [String:Any],object["versionMajor"] as? Int == 2,
+              let model=object["model"] as? [String:Any],model["architecture"] as? String == ModelArchitecture.qwen35MoE.rawValue else {
+            throw ModelLibraryError.incompatible("This pack’s format or architecture is unsupported. Sarvam uses Particle’s v1 default pack; additional native packs require the supported Qwen3.5 MoE v2 layout.")
+        }
+    }
     public static func inspectV2Metadata(_ manifest:ParticleV2Manifest,configuration:Data,tokenizer:Data,tokenizerConfiguration:Data,template:Data) throws -> CompatibilityReport {
         try manifest.validate();try validateChronosLayout(manifest)
         try validateChronosTokenizer(tokenizer:tokenizer,configuration:tokenizerConfiguration)

@@ -28,6 +28,17 @@ import Testing
         }
         try ModelDescriptor.sarvam.validate()
     }
+    @Test func unsupportedNativeFamiliesFailBeforeOpeningPayloads() throws {
+        let root=FileManager.default.temporaryDirectory.appendingPathComponent("particle-unsupported-"+UUID().uuidString+".particle")
+        try FileManager.default.createDirectory(at:root,withIntermediateDirectories:false);defer{try? FileManager.default.removeItem(at:root)}
+        let data=try JSONSerialization.data(withJSONObject:["versionMajor":2,"model":["architecture":"mixtral"]])
+        try data.write(to:root.appendingPathComponent("manifest.json"))
+        do {_=try ArchitectureRegistry.inspectLocal(root);Issue.record("Unsupported architecture was accepted")}
+        catch let error as ModelLibraryError {
+            guard case .incompatible(let reason)=error else {throw error}
+            #expect(reason.contains("architecture"))
+        }
+    }
 
     @Test func preservesMixedQuantizationWithoutQualifyingRuntime() throws {
         let report = try inspect(),model = try #require(report.descriptor)
