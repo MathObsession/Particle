@@ -20,7 +20,7 @@ public enum ModelCalibrator {
         let baseline=model.profile
         guard [1,2,4].contains(baseline.readWorkers),[32,64,128].contains(baseline.prefillChunk),
               (model.descriptor.architecture == .sarvam ? 6...16 : 8...32).contains(baseline.slots),
-              (2...model.descriptor.activeExperts).contains(baseline.activeExperts),baseline.context >= 4096 else {throw ModelLibraryError.invalid("The saved execution profile is invalid.")}
+              model.descriptor.expertRange.contains(baseline.activeExperts),baseline.context >= 4096 else {throw ModelLibraryError.invalid("The saved execution profile is invalid.")}
         let worker=engines.appendingPathComponent(ArchitectureRegistry.adapter(for:model.descriptor.architecture).worker)
         guard FileManager.default.isExecutableFile(atPath:worker.path) else {throw ModelLibraryError.invalid("The bundled model worker is missing.")}
         let identity=try ModelCalibrationIdentity.current(model:URL(fileURLWithPath:model.path),engine:worker)

@@ -1,157 +1,43 @@
-# Particle model library
+# Automatic MoE conversion and model library
 
-The library is implemented in `ParticleModelLibrary`, with native conversion
-in `ParticleLibraryCLI`, the existing Sarvam worker in `ParticleCLI`, and the
-new Qwen3.5 MoE worker in `ParticleMLXCLI`. All installation and inference stays
-on the user's Mac. No publisher credentials are used.
+Particle 0.4.1 replaces the Chronos-only conversion gate with a configuration-driven recipe. A repository name is not a compatibility allowlist.
 
-The desktop adds Models → Discover / Installed / Downloads. Existing chats
-and code sessions bind to the default Sarvam installation without rewriting
-their text. New conversations retain their selected installation ID. Model
-settings include expert slots, routing count, read workers and prompt chunks.
-Sarvam keeps the Churo Chat / Churo Code identities; other models keep their
-source names and provenance.
+Search a model name or paste its public Hugging Face URL. Particle resolves an immutable revision, reads configuration and bounded tensor headers, detects the graph and native mixed quantization, then offers Install when its bundled runtime can execute that graph. Unsupported search results remain visible with the specific missing adapter or format. Model cards do not execute code.
 
-Discover starts with **Recommended**, including the default assistant and
-one-click Install / Use model actions. Recommendations remain available from
-cached metadata offline. They use the same qualification checks as search;
-unvalidated model names cannot become installable recommendations. Additional
-curated recommendations appear when their adapters qualify.
+Install streams source ranges into a `.particle` pack, groups routed tensors into contiguous layer/expert blobs, keeps common tensors separate, preserves the source quantized bytes, and verifies source, payload and expert hashes. It supports indexed shards and single-file safetensors, and extracts an embedded template from tokenizer_config.json when no separate template is supplied. Originals are retained. Existing v1/v2 packs and resumable transfers remain supported.
 
-## Qualification
+## Current runtime families
 
-Sarvam remains the default for Chat and Code. Chronos is available as an
-**early-access, chat-only** model. Its native eight-expert path has passed
-full-logit/continuation comparisons on short and 512/2,048-token histories,
-plus multi-turn, formatting, Unicode, cancellation and state-restoration checks.
-The exhaustive long-history matrix was stopped at the user's request in favor
-of delivering the app. Longer contexts and sustained speed across every
-workload are not exhaustively qualified. No general 2–6 tokens/s guarantee is made.
+| Family | Accepted input | Execution |
+| --- | --- | --- |
+| Sarvam | Existing supported GGUF / v1 Particle | Existing Churo Chat and Code default |
+| Qwen3 MoE | MLX affine safetensors, packed switch_mlp banks | Configuration-driven upstream graph, streamed experts; early-access Chat |
+| Qwen3.5 MoE | Text-only MLX affine safetensors, packed switch_mlp banks | Configuration-driven upstream hybrid-attention graph, streamed experts; early-access Chat |
 
-A Metal buffer-retention problem was isolated to the validation reference's
-repeated unused quantization graphs: a debugger observed roughly 600 extra
-buffers per reference step, while sampled native streaming steps stayed flat.
-Reference initialization now evaluates only bounded placeholders before
-installing the native quantized tensors. This changes the diagnostic reference,
-not the production streaming weights. Chronos coding tools remain disabled.
+The MLX recipes accept affine 2/3/4/5/6/8-bit weights and group sizes 32/64/128, preserving module-specific precision, raw routing tensors and quantization overrides. Dimensions, vocabulary, layer count, expert count, native top-k, attention heads, context accounting and recurrent schedule come from configuration and are checked against the complete tensor graph. The source BPE/ByteLevel tokenizer and Jinja chat template are used; the tokenizer is not pinned to a single checkpoint hash. No whole expert matrix is expanded into floating point.
 
-The first additional layout is the text-only 40-layer, 256-expert Qwen3.5 MoE
-35B-A3B family with affine 3-bit/group-64 expert weights and 8-bit routing
-overrides. The initial tokenizer and template contract is restricted to the
-checksum-pinned Chronos assets; another tokenizer requires separate validation.
-Other architectures, dense or multimodal models, arbitrary remote
-code and incompatible quantizations receive an explanation before weights
-are downloaded. This is an adapter system, not universal MoE conversion.
+The generic runtime keeps the original upstream router, shared branch and reduction, replacing the expert-bank leaf with bounded demand reads and LFU reuse. Cache eviction cannot overwrite arrays held by outstanding GPU operations. The bundled MLX dependencies remain pinned to Swift LM 3.32.3 / MLX Swift 0.32.3, with FoundationModels disabled.
 
-## Pack and installation
+**This is not arbitrary architecture synthesis.** A new attention/routing architecture needs an executable graph adapter; repacking bytes cannot infer its mathematical operations. Mixtral, DeepSeek, GPT-OSS, unknown GGUF families, vision/audio and repository-defined code are not enabled by changing a filename. Search explains these limits instead of silently hiding results. No universal speed or quality guarantee is made.
 
-The existing Sarvam v1 reader is unchanged. V2 records architecture, immutable
-source revision, configuration, tensor ranges, quantization, tokenizer,
-template, licenses, complete source-file SHA-256 hashes, destination hashes
-and individual expert hashes. Conversion copies native quantized bytes;
-it does not requantize or reduce routing.
+## Experts and profiles
 
-Remote conversion reads sequential bounded ranges directly into a partial
-destination. It never stages a second full source checkpoint. New transfers
-use at most 16 MiB per range and durable checkpoints every 64 MiB. New
-checkpoints reconstruct completed source chunks from local payloads plus a
-bounded on-disk header/padding archive, avoiding completed network/SD reads.
-Original chunk and complete-file hashes are still checked. Older checkpoints
-retain their original re-read verification path. The temporary archive is removed
-after publication. Complete source hashes and
-payload/expert hashes are verified before atomic publication. Git metadata
-files also verify their pinned Git blob IDs when available. Shard lengths use
-64-bit accounting. Inference and conversion share an exclusive model lease.
-Critical system memory pressure pauses conversion with verified progress
-retained.
+Every installed model has an Active experts selector directly in Installed, also available in Settings. Choices run from one to native top-k for the MLX adapters; the existing Sarvam worker retains its supported 2–6 range. The native count is labelled. Reduced routing is explicitly experimental and can change answer quality. It never changes or requantizes stored weights.
 
-Local imports preserve originals. GGUF imports use the native packer and
-prepare Sarvam's checksum-pinned public tokenizer when needed. Indexed MLX
-folders use the v2 converter. Existing local packs are fully verified in place. Public repositories with a root v2
-`manifest.json` download the native pack directly, preserving the exact manifest,
-original provenance and quantized payload bytes; they are not reconverted.
-The transfer remains pinned to the hosting repository revision, including when
-that repository is a mirror of the original checkpoint.
-App-managed removals retain conversations, memories and user-owned sources.
-Imported entries can also be removed from the library while preserving their
-original files.
-Local imports and remote transfers share the persistent pause/resume queue.
-Conversations whose model was removed remain readable; sending a new turn
-requires reinstalling their bound model rather than silently using another.
+Preferences are saved independently per model. Selecting a different model opens a model-bound conversation; returning restores its model. Changing routing for the active worker reloads its context while preserving messages. Cache slots, read workers, prompt chunks and conversation limits remain separate controls. Large resident/cache allocations are checked against this Mac’s physical memory before weight loading. Prompt subchunks are automatically bounded when the worst-case selected-expert staging set would exceed the temporary buffer budget.
 
-## Chronos worker
+## State, installation and distribution
 
-The worker uses MLX Swift LM **3.32.3** and MLX Swift **0.32.3**, with
-FoundationModels integration disabled. Building these dependencies requires
-Swift **6.3 or newer**. Testers need neither a compiler nor Python: app
-packaging includes the native converters, both workers and the compiled MLX
-shader bundle.
+Discover / Installed / Downloads share one persistent resumable queue. Public ungated sources only; no publisher token is stored. Paused jobs retain verified progress. New resumptions reconstruct completed source chunks from local payloads and a bounded on-disk header/padding archive; old checkpoints retain their verified re-read path.
 
-The upstream Qwen3.5 model graph owns attention and recurrent computation.
-Common tensors stay resident. Routed expert arrays remain quantized in a
-bounded per-layer LFU cache; selected misses load concurrently. Grouped
-prompt rows reuse each expert. No full expert matrix bank is expanded into floating point.
+Only one worker or converter owns the model lease. Recurrent models keep a stable-prefix recurrent checkpoint plus full-attention KV; Qwen3 uses its full-attention cache. Original templates, Instant/Thinking controls, input-byte acknowledgements, Unicode streaming and context exhaustion remain in the desktop protocol. Chronos and Qwen3 Code mode remain disabled pending tool-specific qualification.
 
-Full-attention KV and recurrent/convolution state have different rewind rules.
-One recurrent-only stable-prefix checkpoint is retained; full KV is trimmed
-to that position when valid. Otherwise the worker rebuilds state. Failed or
-cancelled turns do not commit a partial conversation. Instant and Thinking
-use the original template and evaluated reasoning delimiters. Tools remain
-disabled for Chronos until native round-trip tests qualify them.
+The app bundles conversion, runtime and shaders; testers need neither Xcode nor Python. Model weights download separately. Removing models deletes only app-managed payloads after confirmation; imported originals and conversations remain.
 
-## Development commands
+## Narrow validation for 0.4.1
 
-Use the configured SD toolchain wrapper. Metadata inspection does not download
-model payloads:
+- Real public Qwen3-30B-A3B-4bit and Qwen3-30B-A3B-Instruct-2507-4bit metadata recognized automatically without downloading weights. The latter preserves 8-bit router overrides.
+- A tiny synthetic Qwen3 checkpoint converted losslessly from one safetensors file, with 4-bit/group-32 weights, raw router and an embedded template. Its full-logit/continuation comparison against upstream selected-expert execution had zero differences over two steps. This is a graph integration check, not trained-model quality or speed qualification.
+- Chronos metadata regression and model-specific expert-range checks are retained. No exhaustive benchmark matrix is rerun for this update, per user instruction.
 
-```bash
-Scripts/particle build -c release --product ParticleLibraryCLI
-/Volumes/Particle/Build/Particle/SwiftPM/release/ParticleLibraryCLI inspect \
-  --repo Lifeboat78/Chronos-Ornith-1.5-35B-A3B-MLX-3bit
-```
-
-A native lossless conversion can also be started from the CLI:
-
-```bash
-/Volumes/Particle/Build/Particle/SwiftPM/release/ParticleLibraryCLI convert \
-  --repo Lifeboat78/Chronos-Ornith-1.5-35B-A3B-MLX-3bit \
-  --revision a982bb2ed776bf0db64375de480a1d0a00475a99 \
-  --output /absolute/path/chronos.particle --resume
-```
-
-`ParticleMLXCLI --validate-reference --validation-steps 64` compares all
-vocabulary logits and a greedy continuation in ABBA order using one model
-process. The reference retains the upstream router/shared branch and streams
-selected expert weights into its public SwitchGLU operations. Reference and
-candidate never load a second whole model.
-
-## Optimize for this Mac
-
-Optimization is optional and can take a long time. It runs one worker at a
-time, alternates control/candidate trials, and evaluates safe slot budgets,
-one/two/four readers, and 32/64/128-token chunks. Each workload executes at
-least 64 decode steps. Routing count and context allowance remain unchanged.
-Cancellation keeps the current settings.
-Storage tuning runs the qualified candidate under each profile, avoiding a
-redundant upstream-reference run inside every trial. Independent adapter
-qualification performs upstream comparisons. Tuning still compares complete
-logit and continuation digests across alternating saved/candidate profiles.
-
-Promotion requires repeated complete measurements, unchanged full-logit and
-continuation digests, at least 10% lower median latency on a target workload,
-and no regression greater than 5% on other workloads. Results bind to model
-manifest digest, worker digest, hardware, OS, memory and model storage path.
-Calibration uses forced continuations; it is not a natural-completion speed
-or quality claim. Logical read bytes do not measure physical SSD traffic.
-Power source and Low Power Mode are recorded; a change aborts calibration
-without replacing settings.
-
-## Sources
-
-- [Hugging Face public Hub API](https://huggingface.co/docs/hub/en/api)
-- [Pinned MLX Swift LM package](https://github.com/ml-explore/mlx-swift-lm/blob/3.32.3/Package.swift)
-- [Upstream Qwen3.5 graph](https://github.com/ml-explore/mlx-swift-lm/blob/3.32.3/Libraries/MLXLLM/Models/Qwen35.swift)
-- [Upstream quantized switch layers](https://github.com/ml-explore/mlx-swift-lm/blob/3.32.3/Libraries/MLXLMCommon/SwitchLayers.swift)
-
-Current work and measurements are recorded in
-[`validation/model-library/STATUS.md`](validation/model-library/STATUS.md).
+Further families can reuse the conversion scheduler and pack layout after adding their graph/schema adapter. They must not be marked runnable simply because a converter can write their tensors.

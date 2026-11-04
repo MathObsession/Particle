@@ -149,7 +149,7 @@ public struct OneSettings: Codable, Sendable, Equatable {
         if model.architecture == .sarvam {return valid}
         return [1,2,4].contains(readWorkers) && [32,64,128].contains(prefillChunk) && (8...32).contains(slots) && [4096,8192,16384,32768,65536,131072,262144].contains(context) &&
             context <= min(model.contextLimit,ModelRuntimeProfile(model:model).context) && (64...16384).contains(maxNew) &&
-            (2...model.activeExperts).contains(activeExperts) && system.utf8.count <= 32_768
+            model.expertRange.contains(activeExperts) && system.utf8.count <= 32_768
     }
     /// Stored conversations must remain readable when their model is removed.
     /// This checks the union of supported settings; runtime loading separately
@@ -157,7 +157,7 @@ public struct OneSettings: Codable, Sendable, Equatable {
     public var validForPersistence:Bool {
         [1,2,4].contains(readWorkers) && [32,64,128].contains(prefillChunk) && (6...32).contains(slots) &&
         (ParticleContextPolicy.capacities+[262144]).contains(context) && (64...ParticleContextPolicy.modelLimit).contains(maxNew) &&
-        (2...8).contains(activeExperts) && !modelID.isEmpty && modelID.utf8.count <= 256 && system.utf8.count <= 32_768
+        (1...64).contains(activeExperts) && !modelID.isEmpty && modelID.utf8.count <= 256 && system.utf8.count <= 32_768
     }
     public var valid: Bool { [1,2,4].contains(readWorkers) && [32,64,128].contains(prefillChunk) && (6...16).contains(slots) && ParticleContextPolicy.capacities.contains(context) && (64...ParticleContextPolicy.modelLimit).contains(maxNew) && (2...6).contains(activeExperts) && system.utf8.count<=32_768 }
 }

@@ -15,9 +15,17 @@ struct LibraryListing: Codable, Identifiable, Sendable {
     var isDefault: Bool { descriptor.id == ModelDescriptor.sarvam.id }
 }
 
+struct LibraryCandidate:Identifiable {
+    var id:String {card.repository}
+    let card:HubModelCard
+    var detail:String = "Inspecting architecture and native tensors…"
+    var inspected=false
+}
+
 @MainActor final class ModelLibraryStore: ObservableObject {
     @Published var registry = InstalledModelRegistry()
     @Published var listings = [LibraryListing]()
+    @Published var candidates = [LibraryCandidate]()
     @Published var jobs = [ModelInstallJob]()
     @Published var searching = false
     @Published var converting = false
@@ -91,6 +99,11 @@ struct LibraryListing: Codable, Identifiable, Sendable {
         value.profile.readWorkers = settings.readWorkers;value.profile.prefillChunk = settings.prefillChunk
         do {try registry.register(value);try registry.save(to:root.appendingPathComponent("installed-models.json"))}catch{message = error.localizedDescription}
     }
+    func setExpertCount(_ count:Int,for model:InstalledModel) {
+        guard !saveBlocked,model.descriptor.expertRange.contains(count),let index=registry.models.firstIndex(where:{$0.id == model.id}) else{return}
+        do {var next=registry;var value=next.models[index];value.profile.activeExperts=count;value.calibration=nil;try next.register(value);try next.save(to:root.appendingPathComponent("installed-models.json"));registry=next}
+        catch {message=error.localizedDescription}
+    }
     func saveCalibration(_ record:ModelCalibrationRecord,model:InstalledModel) throws {
         guard !saveBlocked,let index=registry.models.firstIndex(where:{$0.id == model.id}),registry.models[index].profile == record.baseline else {throw ModelLibraryError.invalid("The profile changed during optimization. Current settings were retained.")}
         var value=registry.models[index];value.calibration=record;value.profile=record.selected
@@ -100,7 +113,7 @@ struct LibraryListing: Codable, Identifiable, Sendable {
         work?.cancel()
         let generation = UUID();searchGeneration = generation
         if let retryAfter, retryAfter > Date() {message = ModelLibraryError.rateLimited(retryAfter).localizedDescription;return}
-        let query = search,page = loadMore ? next : nil
+        let query = search.trimmingCharacters(in:.whitespacesAndNewlines),page = loadMore ? next : nil
         work = Task {
             do {
                 try await Task.sleep(for:.milliseconds(400));try Task.checkCancellation();searching = true;message = nil
@@ -110,35 +123,51 @@ struct LibraryListing: Codable, Identifiable, Sendable {
                     try Task.checkCancellation();guard searchGeneration == generation else {return}
                     if let index = listings.firstIndex(where:{$0.isDefault}) {listings[index] = .init(descriptor:.sarvam,card:pinned,report:ArchitectureRegistry.report(.sarvam),readme:readme.map{Self.cardText($0)})}
                 }
-                let results = try await client.search(query,next:page)
+                let results:HubModelPage
+                if !loadMore,let repository=try? HubRepository.parse(query) {
+                    results=HubModelPage(models:[try await client.model(repository)],next:nil)
+                } else {results=try await client.search(query,next:page)}
                 guard searchGeneration == generation else {return}
                 // Retain cached cards until a replacement page succeeds, so
                 // an offline refresh never erases the browseable library.
-                if !loadMore {listings = listings.filter(\.isDefault)}
+                if !loadMore {listings = listings.filter(\.isDefault);candidates=[]}
                 var summaries=results.models
                 let featured="Lifeboat78/Chronos-Ornith-1.5-35B-A3B-MLX-3bit"
                 if !loadMore,(query.isEmpty || featured.localizedCaseInsensitiveContains(query)),!summaries.contains(where:{$0.repository == featured}),
                    let card=try? await client.model(featured,revision:"a982bb2ed776bf0db64375de480a1d0a00475a99") {summaries.insert(card,at:0)}
-                for summary in summaries {
+                if !loadMore,query.isEmpty {
+                    for repository in ModelRecommendations.additionalRepositories where !summaries.contains(where:{$0.repository == repository}) {
+                        if let card=try? await client.model(repository) {summaries.insert(card,at:0)}
+                    }
+                }
+                let eligible=summaries.filter{$0.isMoECandidate || !query.isEmpty}
+                for card in eligible where !candidates.contains(where:{$0.id == card.id}) {candidates.append(.init(card:card))}
+                for summary in eligible {
                     try Task.checkCancellation()
                     guard summary.repository != ModelDescriptor.sarvam.provenance.repository else {continue}
-                    // Tags only reduce requests; each surviving candidate still undergoes tensor inspection.
-                    guard summary.tags.contains("qwen3_5_moe") || summary.repository.localizedCaseInsensitiveContains("Chronos") else {continue}
+                    // Search every MoE family. Unsupported graph adapters are
+                    // visible with a reason instead of disappearing silently.
+                    guard summary.isMoECandidate || !query.isEmpty else {continue}
+                    if !candidates.contains(where:{$0.id == summary.id}) {candidates.append(.init(card:summary))}
                     do {
                         let card = try await client.model(summary.repository,revision:summary.repository == featured ? "a982bb2ed776bf0db64375de480a1d0a00475a99" : nil)
                         let report = try await client.inspect(card)
                         try Task.checkCancellation();guard searchGeneration == generation else {return}
+                        if let index=candidates.firstIndex(where:{$0.id == summary.id}) {candidates[index].detail=report.reason;candidates[index].inspected=true}
                         if report.installable,let descriptor = report.descriptor,!listings.contains(where: {$0.id == descriptor.id}) {
                             let readme = try? await client.metadata(card,path:"README.md",limit:524_288)
                             try Task.checkCancellation()
                             listings.append(.init(descriptor:descriptor,card:card,report:report,readme:readme.map{Self.cardText($0)}))
                         }
                     } catch is CancellationError {throw CancellationError()}
-                    catch let error as ModelLibraryError {if case .rateLimited = error {throw error}}
-                    catch {continue}
+                    catch let error as ModelLibraryError {
+                        if case .rateLimited = error {throw error}
+                        if let index=candidates.firstIndex(where:{$0.id == summary.id}) {candidates[index].detail=error.localizedDescription;candidates[index].inspected=true}
+                    }
+                    catch {if let index=candidates.firstIndex(where:{$0.id == summary.id}) {candidates[index].detail=error.localizedDescription;candidates[index].inspected=true}}
                 }
                 next = results.next;searching = false
-                if listings.allSatisfy(\.isDefault),!query.isEmpty {message = "No additional qualified MoE models matched. You can inspect a repository directly for a compatibility explanation."}
+                if candidates.isEmpty,!query.isEmpty {message = "No MoE repositories matched this page. Try the repository name or paste its Hugging Face link; Load more searches the next page."}
                 if !saveBlocked {try JSONEncoder().encode(listings).write(to:root.appendingPathComponent("model-library-cache.json"),options:.atomic)}
             } catch is CancellationError {if searchGeneration == generation {searching = false}}
             catch {
@@ -159,7 +188,7 @@ struct LibraryListing: Codable, Identifiable, Sendable {
                 guard searchGeneration == generation else {return}
                 if report.installable,let descriptor = report.descriptor {
                     listings.removeAll {$0.id == descriptor.id};listings.append(.init(descriptor:descriptor,card:card,report:report));message = "Compatible model added to Discover."
-                } else {message = report.reason}
+                } else {message = report.reason;candidates.removeAll{$0.id == card.id};candidates.append(.init(card:card,detail:report.reason,inspected:true))}
                 searching = false
             } catch {guard searchGeneration == generation else{return};message = error.localizedDescription;searching = false}
         }

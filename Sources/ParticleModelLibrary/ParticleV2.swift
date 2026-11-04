@@ -37,7 +37,7 @@ public struct ParticleV2Manifest: Codable, Equatable, Sendable {
     }
     public func validate() throws {
         try model.validate()
-        guard magic == ParticleFormat.magic, versionMajor == 2, model.architecture == .qwen35MoE,model.id != ModelDescriptor.sarvam.id,
+        guard magic == ParticleFormat.magic, versionMajor == 2, [.qwen35MoE,.qwen3MoE].contains(model.architecture),model.id != ModelDescriptor.sarvam.id,
               !files.isEmpty, files.count <= 512, !sourceFiles.isEmpty, sourceFiles.count <= 512,
               !tensors.isEmpty, tensors.count <= 100_000, Set(tensors.map(\.name)).count == tensors.count else {
             throw ModelLibraryError.invalid("Unsupported or incomplete Particle v2 manifest.")

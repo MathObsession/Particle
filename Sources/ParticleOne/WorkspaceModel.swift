@@ -256,7 +256,7 @@ final class DesktopPipeReader: @unchecked Sendable {
         }
     }
     func setExpertCount(_ count: Int) {
-        guard !busy,!loading,(2...6).contains(count),count != settings.activeExperts else{return}
+        guard !busy,!loading,selectedModelDescriptor.expertRange.contains(count),count != settings.activeExperts else{return}
         var updated=settings;updated.activeExperts=count;updateSettings(updated)
     }
     func loadModel() {

@@ -58,3 +58,23 @@ https://github.com/MathObsession/Particle/releases/tag/v0.4.0. The archive SHA-2
 matching GitHub’s uploaded asset digest. The existing internal Chronos pack was
 registered without copying its weights; older application releases were removed
 after verified installation. Chat data and models were preserved.
+
+## 0.4.1: automatic recipes and expert selection
+
+The converter now derives Qwen3 MoE and text-only Qwen3.5 MoE layouts from
+configuration and complete tensor headers, with mixed native affine quantization.
+Checkpoint dimensions, 3-bit precision and tokenizer/template hashes are no longer
+fixed to Chronos. Single-file checkpoints and embedded templates are supported.
+Search accepts names or public repository links; other architectures/formats show
+specific compatibility reasons. Expert selections persist per model, with reduced
+routing marked experimental. Search appears above the starter recommendations.
+
+Five narrow regression checks passed. A tiny synthetic Qwen3 single-file pack
+(4-bit/group-32, raw router, embedded template) converted successfully and had zero
+full-logit/continuation differences across a two-step ABBA check. The installed
+Chronos pack still loaded and replied “Hello.” Real Qwen3-30B-A3B-4bit and
+Qwen3-30B-A3B-Instruct-2507-4bit metadata were accepted without weight downloads.
+No trained Qwen3 quality/speed or exhaustive quantization-grid benchmark is claimed.
+Unknown architectures still require an executable graph adapter.
+
+Release build `20261104140233`; archive SHA-256 `1aeef69d7077371cce03d29075247cbbaa5a365ba80c46a0beea349193872d53`.

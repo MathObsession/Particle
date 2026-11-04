@@ -45,7 +45,7 @@ import ParticleDesktopProtocol
                 };i += 1
             }
             guard !model.isEmpty,(4096...262144).contains(context),(1...16384).contains(maxNew),maxNew < context,
-                  (8...32).contains(slots),(2...8).contains(experts),[32,64,128].contains(chunk),(-1...4096).contains(budget),[1,2,4].contains(readWorkers),temperature.isFinite,(0...2).contains(temperature),(1...128).contains(validationSteps) else {throw ModelLibraryError.invalid("Invalid Chronos execution settings.")}
+                  (8...32).contains(slots),(1...64).contains(experts),[32,64,128].contains(chunk),(-1...4096).contains(budget),[1,2,4].contains(readWorkers),temperature.isFinite,(0...2).contains(temperature),(1...128).contains(validationSteps) else {throw ModelLibraryError.invalid("Invalid Chronos execution settings.")}
             guard experimental || ArchitectureRegistry.adapter(for:.qwen35MoE).qualification == .qualified else {throw ModelLibraryError.incompatible("Chronos is awaiting runtime qualification. Development runs require --allow-unqualified-run.")}
             guard benchmarkSession == nil || (!interactive && !validateReference && !prompt.isEmpty) else {throw ModelLibraryError.invalid("Calibration requires a prompt and a non-interactive worker.")}
         }
@@ -124,7 +124,7 @@ import ParticleDesktopProtocol
             if options.interactive {mailbox.startStandardInput()}
             var messages:[Message] = []
             var next = options.prompt.isEmpty ? nil : options.prompt
-            if options.desktop {event(["event":"capabilities","protocol_version":2,"architecture":"qwen3_5_moe","native_experts":8,"tools":false,"reasoning":true,"context_limit":262144])}
+            if options.desktop {event(["event":"capabilities","protocol_version":2,"architecture":model.reader.manifest.model.architecture.rawValue,"native_experts":model.reader.manifest.model.activeExperts,"tools":false,"reasoning":true,"context_limit":model.reader.manifest.model.contextLimit])}
             while true {
                 let text:String
                 if let initial = next {text = initial;next = nil}

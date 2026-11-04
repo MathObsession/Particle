@@ -17,6 +17,7 @@ public struct MLXPackPlan: Codable, Sendable {
     public let payloadSizes: [String: Int64]
     public let tensors: [ParticleV2Tensor]
     public let ranges: [MLXPackCopyRange]
+    public var generatedFiles:[String:Data]? = nil
     public var payloadBytes: Int64 { payloadSizes.values.reduce(0,+) }
 }
 private struct MLXCopyCheckpoint: Codable {
@@ -42,13 +43,26 @@ public enum MLXPackConverter {
     public static func plan(source: any ModelByteSource, provenance: ModelProvenance = .init()) async throws -> MLXPackPlan {
         let config = try await metadata(source,path:"config.json",limit:1_048_576)
         if let reason=try ArchitectureRegistry.configurationIncompatibility(config) {throw ModelLibraryError.incompatible(reason)}
-        let index = try await metadata(source,path:"model.safetensors.index.json",limit:16*1024*1024)
-        guard let object = try JSONSerialization.jsonObject(with:index) as? [String:Any], let map = object["weight_map"] as? [String:String],
-              !map.isEmpty, map.count <= 100_000, Set(map.values).count <= 128 else { throw ModelLibraryError.invalid("Invalid checkpoint shard index.") }
+        let map:[String:String]
+        if source.files.contains(where:{$0.path == "model.safetensors.index.json"}) {
+            let index=try await metadata(source,path:"model.safetensors.index.json",limit:16*1024*1024)
+            guard let object=try JSONSerialization.jsonObject(with:index) as? [String:Any],let value=object["weight_map"] as? [String:String],!value.isEmpty,value.count <= 100_000,Set(value.values).count <= 128 else {throw ModelLibraryError.invalid("Invalid checkpoint shard index.")}
+            map=value
+        } else {
+            let candidates=source.files.filter{$0.path == "model.safetensors" || ($0.path.hasSuffix(".safetensors") && !$0.path.contains("/"))}
+            guard candidates.count == 1,let file=candidates.first else {throw ModelLibraryError.incompatible("A single safetensors file or an indexed checkpoint is required.")}
+            let prefix=try await source.read(file.path,range:0..<8)
+            let length=prefix.enumerated().reduce(UInt64(0)){$0 | UInt64($1.element) << (8*$1.offset)}
+            guard length > 1,length <= SafetensorsHeader.maximumHeaderBytes,length <= UInt64(max(0,file.bytes-8)) else {throw ModelLibraryError.invalid("Invalid single-file tensor header.")}
+            let header=try await source.read(file.path,range:8..<(8+Int64(length)))
+            let parsed=try SafetensorsHeader(prefix:prefix+header,fileBytes:file.bytes)
+            map=Dictionary(uniqueKeysWithValues:parsed.tensors.keys.map{($0,file.path)})
+        }
         var records = [String:SafetensorRecord](); var shardFiles = [HubFile]()
         for path in Set(map.values).sorted() {
             try ParticleFormat.validatePath(path)
             guard let file = source.files.first(where: {$0.path == path}), file.bytes > 8, path.hasSuffix(".safetensors") else { throw ModelLibraryError.invalid("Missing safetensors shard.") }
+            if provenance.repository != nil,file.sha256 == nil {throw ModelLibraryError.invalid("The remote shard has no source checksum.")}
             let prefix = try await source.read(path,range:0..<8)
             let n = prefix.enumerated().reduce(UInt64(0)) { $0 | UInt64($1.element) << (8*$1.offset) }
             guard n > 1, n <= SafetensorsHeader.maximumHeaderBytes, n <= UInt64(file.bytes-8) else { throw ModelLibraryError.invalid("Invalid safetensors header size.") }
@@ -64,7 +78,14 @@ public enum MLXPackConverter {
             shardFiles.append(file)
         }
         guard Set(records.keys) == Set(map.keys) else { throw ModelLibraryError.invalid("Missing checkpoint tensors.") }
-        let template = try await metadata(source,path:"chat_template.jinja",limit:262_144)
+        let template:Data
+        var generated=[String:Data]()
+        if source.files.contains(where:{$0.path == "chat_template.jinja"}) {template=try await metadata(source,path:"chat_template.jinja",limit:262_144)}
+        else {
+            let data=try await metadata(source,path:"tokenizer_config.json",limit:1_048_576)
+            guard let config=try JSONSerialization.jsonObject(with:data) as? [String:Any],let text=config["chat_template"] as? String,!text.isEmpty,text.utf8.count <= 262_144 else {throw ModelLibraryError.incompatible("No supported chat template was found in the checkpoint.")}
+            template=Data(text.utf8);generated["tokenizer/chat_template.jinja"]=template
+        }
         try await ArchitectureRegistry.validateChronosTokenizer(tokenizer:metadata(source,path:"tokenizer.json",limit:64*1024*1024),configuration:metadata(source,path:"tokenizer_config.json",limit:1_048_576))
         let total = try shardFiles.reduce(Int64(0)) { value,file in
             let (sum,overflow) = value.addingReportingOverflow(file.bytes); guard !overflow else { throw ModelLibraryError.invalid("Checkpoint size overflow.") }; return sum
@@ -74,11 +95,7 @@ public enum MLXPackConverter {
         guard report.conversionSupported,let model = report.descriptor else { throw ModelLibraryError.incompatible(report.reason) }
         var ranges = [MLXPackCopyRange](); var tensors = [ParticleV2Tensor](); var sizes:[String:Int64] = ["common.bin":0]
         func align(_ n:Int64,to:Int = 256) throws -> Int64 { Int64(try ParticleFormat.aligned(Int(n),to:to)) }
-        func routedLayer(_ name:String) -> Int? {
-            let parts = name.split(separator:".")
-            guard parts.count >= 8, parts[0] == "language_model",parts[1] == "model",parts[2] == "layers",parts[4] == "mlp",parts[5] == "switch_mlp" else { return nil }
-            return Int(parts[3])
-        }
+        func routedLayer(_ name:String) -> Int? {MoEModelSchema.routedLayer(name)}
         for record in records.values.sorted(by: {$0.name < $1.name}) where routedLayer(record.name) == nil {
             let offset = try align(sizes["common.bin"]!)
             sizes["common.bin"] = offset+record.bytes
@@ -111,14 +128,15 @@ public enum MLXPackConverter {
                       "README.md":"MODEL_CARD.md", "LICENSE":"MODEL_LICENSE", "LICENSE.txt":"MODEL_LICENSE.txt"]
         for (name,destination) in copied.sorted(by: {$0.key < $1.key}) {
             guard let file = source.files.first(where: {$0.path == name}) else {
-                guard !["config.json","tokenizer.json","tokenizer_config.json","chat_template.jinja"].contains(name) else { throw ModelLibraryError.invalid("Missing model metadata: \(name).") }; continue
+                guard !["config.json","tokenizer.json","tokenizer_config.json"].contains(name) else { throw ModelLibraryError.invalid("Missing model metadata: \(name).") }; continue
             }
             guard file.bytes > 0,file.bytes <= 64*1024*1024 else { throw ModelLibraryError.invalid("Model metadata exceeds its bound.") }
             sources.append(file); sizes[destination] = file.bytes
             ranges.append(.init(source:name,offset:0,bytes:file.bytes,file:destination,destination:0))
         }
+        for (path,data) in generated {sizes[path]=Int64(data.count)}
         return MLXPackPlan(model:model,sourceFiles:sources.sorted {$0.path < $1.path},payloadSizes:sizes,tensors:tensors.sorted {$0.name < $1.name},
-                           ranges:ranges.sorted { ($0.source,$0.offset) < ($1.source,$1.offset) })
+                           ranges:ranges.sorted { ($0.source,$0.offset) < ($1.source,$1.offset) },generatedFiles:generated.isEmpty ? nil : generated)
     }
 
     /// Full-source sequential verification, bounded scatter writes and durable resumability.
@@ -314,6 +332,10 @@ public enum MLXPackConverter {
             verifiedSources[file.path] = .init(bytes:file.bytes,sha256:sha);try commit()
         }
         guard committedIndex == checkpoint.chunks.count else {throw ModelLibraryError.invalid("Unexpected conversion checkpoint suffix.")}
+        for (path,data) in plan.generatedFiles ?? [:] {
+            guard path == "tokenizer/chat_template.jinja",data.count <= 262_144,Int64(data.count) == plan.payloadSizes[path],let fd=outputs[path] else {throw ModelLibraryError.invalid("Invalid derived chat template.")}
+            try write(fd,0,data);guard fsync(fd) == 0 else {throw ModelLibraryError.invalid("Could not synchronize the derived template.")}
+        }
         var files = [String:ParticleV2File]();var expertHashes = [String:[String]]()
         for path in plan.payloadSizes.keys.sorted() {
             try Task.checkCancellation();progress(total,total,"Verifying "+path)

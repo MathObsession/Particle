@@ -122,10 +122,16 @@ import ParticlePackCore
                 }
             } else {
                 let root = URL(fileURLWithPath:values["--source"]!,isDirectory:true)
-                let data = try ArchitectureRegistry.boundedData(root.appendingPathComponent("model.safetensors.index.json"),limit:16*1024*1024)
-                guard let object = try JSONSerialization.jsonObject(with:data) as? [String:Any],let map = object["weight_map"] as? [String:String] else {throw ModelLibraryError.invalid("An indexed MLX model folder is required.")}
+                let shards:[String]
+                if FileManager.default.fileExists(atPath:root.appendingPathComponent("model.safetensors.index.json").path) {
+                    let data=try ArchitectureRegistry.boundedData(root.appendingPathComponent("model.safetensors.index.json"),limit:16*1024*1024)
+                    guard let object=try JSONSerialization.jsonObject(with:data) as? [String:Any],let map=object["weight_map"] as? [String:String] else {throw ModelLibraryError.invalid("Invalid checkpoint index.")};shards=Array(Set(map.values))
+                } else {
+                    shards=try FileManager.default.contentsOfDirectory(at:root,includingPropertiesForKeys:nil).filter{$0.pathExtension == "safetensors"}.map(\.lastPathComponent)
+                    guard shards.count == 1 else {throw ModelLibraryError.invalid("Choose a single-file or indexed MLX checkpoint.")}
+                }
                 let metadata = ["config.json","model.safetensors.index.json","tokenizer.json","tokenizer_config.json","chat_template.jinja","generation_config.json","README.md","LICENSE","LICENSE.txt"].filter {FileManager.default.fileExists(atPath:root.appendingPathComponent($0).path)}
-                source = try LocalModelByteSource(root:root,paths:Array(Set(map.values))+metadata)
+                source = try LocalModelByteSource(root:root,paths:shards+metadata)
             }
             let plan = try await MLXPackConverter.plan(source:source,provenance:provenance)
             if flags.contains("--plan") {try emit(plan);return}

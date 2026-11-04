@@ -47,6 +47,15 @@ struct ModelLibraryView: View {
     }
     private var discover: some View {
         VStack(alignment:.leading,spacing:18) {
+            HStack {
+                Image(systemName:"magnifyingglass").foregroundStyle(Design.green)
+                TextField("Search any MoE name or paste a Hugging Face link",text:$library.search).textFieldStyle(.plain).onChange(of:library.search){_,_ in library.discover()}
+                if library.searching {ProgressView().controlSize(.small)}
+                Button{showRepository.toggle()}label:{Image(systemName:"link").frame(width:30,height:30)}.buttonStyle(.plain).help("Add Hugging Face repository")
+            }.font(Design.body(12)).padding(13).background(Design.surface,in:RoundedRectangle(cornerRadius:13))
+            if showRepository {
+                HStack{TextField("owner/model or Hugging Face URL",text:$library.repository).textFieldStyle(.roundedBorder);Button("Inspect"){library.inspectRepository()}.buttonStyle(HitButtonStyle()).disabled(library.searching)}.font(Design.body(11))
+            }
             if library.search.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty,!library.recommended.isEmpty {
                 VStack(alignment:.leading,spacing:5) {
                     Text("Recommended").font(Design.heading(23))
@@ -54,20 +63,27 @@ struct ModelLibraryView: View {
                 }
                 ForEach(library.recommended) { listing in modelCard(listing,recommended:true) }
             }
-            HStack {
-                Image(systemName:"magnifyingglass").foregroundStyle(Design.green)
-                TextField("Search compatible MoE models",text:$library.search).textFieldStyle(.plain).onChange(of:library.search){_,_ in library.discover()}
-                if library.searching {ProgressView().controlSize(.small)}
-                Button{showRepository.toggle()}label:{Image(systemName:"link").frame(width:30,height:30)}.buttonStyle(.plain).help("Add Hugging Face repository")
-            }.font(Design.body(12)).padding(13).background(Design.surface,in:RoundedRectangle(cornerRadius:13))
-            if showRepository {
-                HStack{TextField("owner/model or Hugging Face URL",text:$library.repository).textFieldStyle(.roundedBorder);Button("Inspect"){library.inspectRepository()}.buttonStyle(HitButtonStyle()).disabled(library.searching)}.font(Design.body(11))
-            }
             ForEach(library.listings.filter { listing in
                 let searching = !library.search.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty
-                return searching ? (listing.descriptor.name.localizedCaseInsensitiveContains(library.search) || (listing.descriptor.provenance.repository?.localizedCaseInsensitiveContains(library.search) ?? false)) : !library.recommended.contains(where: { $0.id == listing.id })
+                return searching ? (!listing.isDefault || listing.descriptor.name.localizedCaseInsensitiveContains(library.search) || (listing.descriptor.provenance.repository?.localizedCaseInsensitiveContains(library.search) ?? false)) : !library.recommended.contains(where: { $0.id == listing.id })
             }) { listing in modelCard(listing,recommended:false) }
-            Text("Only models whose architecture, quantization and runtime have passed Particle’s compatibility checks appear here. More recommendations will appear as additional models are validated.").font(Design.body(11)).foregroundStyle(Design.muted).lineSpacing(4)
+            ForEach(library.candidates.filter {candidate in !library.listings.contains(where:{$0.card?.repository == candidate.id})}) {candidate in
+                card {
+                    VStack(alignment:.leading,spacing:9) {
+                        HStack(alignment:.top) {
+                            Image(systemName:candidate.inspected ? "shippingbox" : "magnifyingglass").foregroundStyle(Design.green)
+                            Text(candidate.card.repository).font(Design.medium(12)).textSelection(.enabled)
+                            Spacer()
+                            if !candidate.inspected {ProgressView().controlSize(.small)}
+                            else {Text("Adapter needed").font(Design.body(10)).foregroundStyle(Design.muted)}
+                        }
+                        Text(candidate.detail).font(Design.body(11)).foregroundStyle(Design.muted).fixedSize(horizontal:false,vertical:true)
+                        Text("\(candidate.card.downloads.formatted()) downloads · \(candidate.card.likes.formatted()) likes · \(candidate.card.license ?? "See source license")").font(Design.body(9)).foregroundStyle(Design.muted)
+                        if let url=URL(string:"https://huggingface.co/"+candidate.id) {Link("View source and available variants ↗",destination:url).font(Design.body(10)).tint(Design.green)}
+                    }
+                }
+            }
+            Text("Install automatically inspects native tensors, builds a streamed .particle pack and verifies it. Supported now: Sarvam, Qwen3 MoE and text-only Qwen3.5 MoE with MLX affine weights. Other families show the missing adapter or format instead of disappearing.").font(Design.body(11)).foregroundStyle(Design.muted).lineSpacing(4)
             if library.next != nil {Button("Load more"){library.discover(loadMore:true)}.buttonStyle(HitButtonStyle()).disabled(library.searching)}
         }
     }
@@ -76,10 +92,10 @@ struct ModelLibraryView: View {
                     HStack(alignment:.top,spacing:16) {
                         Image(systemName:"cpu").font(.system(size:25)).foregroundStyle(Design.green).padding(.top,4)
                         VStack(alignment:.leading,spacing:7) {
-                            HStack{Text(listing.descriptor.name).font(Design.heading(22));if listing.isDefault {Text("DEFAULT").font(Design.medium(8)).tracking(1).padding(6).background(Design.line,in:Capsule())} else if listing.descriptor.architecture == .qwen35MoE {Text("EARLY ACCESS").font(Design.medium(8)).tracking(0.6).padding(6).background(Design.line,in:Capsule())}}
+                            HStack{Text(listing.descriptor.name).font(Design.heading(22));if listing.isDefault {Text("DEFAULT").font(Design.medium(8)).tracking(1).padding(6).background(Design.line,in:Capsule())} else if listing.descriptor.architecture != .sarvam {Text("EARLY ACCESS").font(Design.medium(8)).tracking(0.6).padding(6).background(Design.line,in:Capsule())}}
                             Text(listing.descriptor.provenance.repository ?? "Local model").font(Design.body(10)).foregroundStyle(Design.muted)
                             if recommended,let reason=ModelRecommendations.reason(for:listing.descriptor) {Text(reason).font(Design.body(11)).foregroundStyle(Design.muted).fixedSize(horizontal:false,vertical:true)}
-                            Text(listing.descriptor.architecture == .sarvam ? "≈30B total parameters" : "≈35B total · ≈3B active parameters").font(Design.body(10)).foregroundStyle(Design.muted)
+                            Text("\(listing.descriptor.layers) layers · \(listing.descriptor.experts) total experts").font(Design.body(10)).foregroundStyle(Design.muted)
                             Text("\(listing.descriptor.activeExperts) active experts · \(listing.descriptor.quantization.label)").font(Design.body(11))
                             Text(ByteCountFormatter.string(fromByteCount:listing.descriptor.sourceBytes,countStyle:.file)+" download · "+(listing.descriptor.provenance.license ?? "See model license")).font(Design.body(10)).foregroundStyle(Design.muted)
                             Text("Allow "+ByteCountFormatter.string(fromByteCount:listing.descriptor.sourceBytes+2_147_483_648,countStyle:.file)+" free for installation").font(Design.body(10)).foregroundStyle(Design.muted)
@@ -107,6 +123,16 @@ struct ModelLibraryView: View {
                         HStack{Text(value.descriptor.name).font(Design.heading(21));Spacer();Button("Use model"){model.useInstalledModel(value)}.buttonStyle(WashedButtonStyle(compact:true)).disabled(model.busy || model.loading || model.settings.modelPath == value.path || !WorkspaceModel.modelExists(value.path))}
                         if !WorkspaceModel.modelExists(value.path) {Text("Model files are unavailable. Reinstall from Discover or import the source again; conversations are retained.").font(Design.body(10)).foregroundStyle(Design.muted)}
                         Text(value.descriptor.quantization.label+" · "+ByteCountFormatter.string(fromByteCount:value.descriptor.sourceBytes,countStyle:.file)).font(Design.body(11)).foregroundStyle(Design.muted)
+                        HStack {
+                            Text("Active experts").font(Design.medium(11))
+                            Picker("Active experts",selection:Binding(get:{value.profile.activeExperts},set:{count in
+                                if model.settings.modelPath == value.path {model.setExpertCount(count)}
+                                else {library.setExpertCount(count,for:value)}
+                            })) {ForEach(Array(value.descriptor.expertRange),id:\.self){count in Text(count == value.descriptor.activeExperts ? "\(count) · Native" : "\(count)").tag(count)}}
+                                .labelsHidden().frame(width:130)
+                            Text("of \(value.descriptor.experts) total").font(Design.body(10)).foregroundStyle(Design.muted)
+                        }.disabled(model.busy || model.loading)
+                        if value.profile.activeExperts != value.descriptor.activeExperts {Text("Reduced routing is experimental: fewer experts can improve speed but can reduce answer quality. A change reloads the model context; your messages are retained.").font(Design.body(10)).foregroundStyle(Design.muted)}
                         HStack {
                             Button("Model settings…"){model.useInstalledModel(value);dismiss();model.showSettings = true}.buttonStyle(HitButtonStyle()).disabled(model.busy || model.loading)
                             Button("Optimize for this Mac"){model.optimizeLibraryModel(value)}.buttonStyle(HitButtonStyle()).disabled(model.busy || model.loading || model.modelInstallationActive || !ArchitectureRegistry.report(value.descriptor).installable)

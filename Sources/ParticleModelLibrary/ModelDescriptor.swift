@@ -1,7 +1,7 @@
 import Foundation
 import CryptoKit
 
-public enum ModelArchitecture: String, Codable, Sendable { case sarvam = "sarvam_moe", qwen35MoE = "qwen3_5_moe" }
+public enum ModelArchitecture: String, Codable, Sendable { case sarvam = "sarvam_moe", qwen35MoE = "qwen3_5_moe", qwen3MoE = "qwen3_moe" }
 public enum ModelArtifact: String, Codable, Sendable { case particle, gguf, mlx }
 public enum AdapterQualification: String, Codable, Sendable { case qualified, experimental }
 
@@ -51,6 +51,7 @@ public struct ModelDescriptor: Codable, Equatable, Identifiable, Sendable {
     public static func identity(repository: String, revision: String, artifact: String) -> String {
         SHA256.hash(data: Data((repository+"\n"+revision+"\n"+artifact).utf8)).map { String(format: "%02x", $0) }.joined()
     }
+    public var expertRange:ClosedRange<Int> {(architecture == .sarvam ? min(2,activeExperts) : 1)...activeExperts}
     public func validate() throws {
         guard id.range(of:"^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}\\z",options:.regularExpression) != nil, !name.isEmpty, name.utf8.count <= 512,
               (1...512).contains(layers), (2...4096).contains(experts), (1...experts).contains(activeExperts),

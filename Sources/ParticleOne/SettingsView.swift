@@ -37,7 +37,7 @@ struct ParticleOneSettings: View {
                         HStack{Button("Choose existing model…"){model.chooseModel();value.modelPath=model.settings.modelPath}.disabled(model.connected || model.busy || model.loading);Button("Model library…"){model.showSettings=false;DispatchQueue.main.asyncAfter(deadline:.now()+0.3){model.showModelLibrary=true}}.disabled(model.connected || model.busy || model.loading)}.font(Design.body(11))
                     }
                     section("Make it yours"){
-                        settingRow("Active routed experts") {Stepper("\(value.activeExperts) of \(model.selectedModelDescriptor.activeExperts)",value:$value.activeExperts,in:2...model.selectedModelDescriptor.activeExperts).font(Design.mono(12)).frame(width:130)}
+                        settingRow("Active routed experts") {Stepper("\(value.activeExperts) of \(model.selectedModelDescriptor.activeExperts)",value:$value.activeExperts,in:model.selectedModelDescriptor.expertRange).font(Design.mono(12)).frame(width:130)}
                         Text(value.activeExperts==model.selectedModelDescriptor.activeExperts ? "The original model’s expert selection." : "Experimental: uses fewer experts for speed. Answers can change; measured quality loss varies by task.").font(Design.body(10)).foregroundStyle(Design.muted)
                         settingRow("RAM expert slots") {Stepper("\(value.slots)",value:$value.slots,in:slotRange).font(Design.mono(12)).frame(width:105)}
                         Text(cacheBudgetText).font(Design.body(10)).foregroundStyle(Design.muted)

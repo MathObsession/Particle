@@ -13,30 +13,19 @@ private final class ExpertReadTicket: @unchecked Sendable {
     func wait() throws -> Data {condition.lock();defer{condition.unlock()};while result == nil {condition.wait()};return try result!.get()}
 }
 
-private final class SharedExpert: Module, UnaryLayer {
-    @ModuleInfo(key:"gate_proj") var gate: Linear
-    @ModuleInfo(key:"up_proj") var up: Linear
-    @ModuleInfo(key:"down_proj") var down: Linear
-    override init() {
-        _gate.wrappedValue = Linear(2048,512,bias:false)
-        _up.wrappedValue = Linear(2048,512,bias:false)
-        _down.wrappedValue = Linear(512,2048,bias:false)
-        super.init()
-    }
-    func callAsFunction(_ x: MLXArray) -> MLXArray {down(silu(gate(x))*up(x))}
-}
-
 struct QuantizedExpert {
     struct Projection {
         let weight: MLXArray
         let scales: MLXArray
         let biases: MLXArray
+        var bits:Int = 3
+        var groupSize:Int = 64
         func callAsFunction(_ x: MLXArray) -> MLXArray {
             // Match the reference gathered operator even for one resident
             // expert, retaining bounded native-quantized weights.
             gatherQuantizedMM(x.expandedDimensions(axes:[-2,-3]),weight.expandedDimensions(axis:0),
                 scales:scales.expandedDimensions(axis:0),biases:biases.expandedDimensions(axis:0),
-                rhsIndices:MLXArray.zeros([x.dim(0),1],dtype:.uint32),transpose:true,groupSize:64,bits:3,
+                rhsIndices:MLXArray.zeros([x.dim(0),1],dtype:.uint32),transpose:true,groupSize:groupSize,bits:bits,
                 sortedIndices:true).squeezed(axes:[-2,-3])
         }
     }
@@ -54,7 +43,7 @@ struct QuantizedExpert {
         func project(_ input: MLXArray, _ key: KeyPath<Self,Projection>) -> MLXArray {
             let projections = experts.map{$0[keyPath:key]}
             return gatherQuantizedMM(input,stacked(projections.map(\.weight)),scales:stacked(projections.map(\.scales)),
-                biases:stacked(projections.map(\.biases)),rhsIndices:selected,transpose:true,groupSize:64,bits:3,sortedIndices:sortedKernel)
+                biases:stacked(projections.map(\.biases)),rhsIndices:selected,transpose:true,groupSize:projections[0].groupSize,bits:projections[0].bits,sortedIndices:sortedKernel)
         }
         let hidden = compiledSiluProduct(project(input,\.gate),project(input,\.up))
         var output=project(hidden,\.down)
@@ -70,8 +59,9 @@ struct QuantizedExpert {
             // abandoning unevaluated full-size quantization graphs. Those
             // retained ~600 small Metal buffers per reference model step.
             let placeholder=SwitchLinear(inputDims:inputDims,outputDims:outputDims,numExperts:totalExperts ?? experts.count,
-                weight:MLXArray.zeros([1,64],dtype:.bfloat16),bias:nil)
-            let projection=QuantizedSwitchLinear(placeholder,groupSize:64,bits:3)
+                weight:MLXArray.zeros([1,128],dtype:.bfloat16),bias:nil)
+            let source=experts[0][keyPath:name == "gate_proj" ? \Self.gate : name == "up_proj" ? \Self.up : \Self.down]
+            let projection=QuantizedSwitchLinear(placeholder,groupSize:source.groupSize,bits:source.bits)
             eval(projection.parameters());modules.append((name,projection))
         }
         try block.update(modules:.unflattened(modules),verify:.all)
@@ -99,6 +89,7 @@ struct QuantizedExpert {
 final class ExpertStore {
     let reader: ParticleV2Reader
     let slots: Int
+    var prefix:String {reader.manifest.model.architecture == .qwen3MoE ? "" : "language_model."}
     var failure: Error?
     var readBytes: Int64 = 0
     var hits = 0
@@ -125,13 +116,17 @@ final class ExpertStore {
         if let value = values[layer]?[expert] {frequency[layer,default:[:]][expert,default:0] += 1;hits += 1;return value}
         let data = try pending.removeValue(forKey:expert)?.wait() ?? reader.expert(layer:layer,expert:expert);readBytes += Int64(data.count)
         func projection(_ name: String) throws -> QuantizedExpert.Projection {
-            let prefix = "language_model.model.layers.\(layer).mlp.switch_mlp.\(name)"
+            let prefix = "\(self.prefix)model.layers.\(layer).mlp.switch_mlp.\(name)"
             func tensor(_ suffix: String) throws -> MLXArray {
                 guard let record = reader.tensorIndex[prefix+suffix],record.layer == layer else {throw ModelLibraryError.invalid("Expert projection metadata is missing.")}
                 let bytes = data.subdata(in:Int(record.offset)..<Int(record.offset+record.bytes))
                 return MLXArray(bytes,Array(record.shape.dropFirst()),dtype:try Self.dtype(record.dtype))
             }
-            return try .init(weight:tensor(".weight"),scales:tensor(".scales"),biases:tensor(".biases"))
+            let w=try tensor(".weight"),scale=try tensor(".scales"),bias=try tensor(".biases")
+            let defaultBits=reader.manifest.model.quantization.bits ?? 3
+            let bits=reader.manifest.model.quantization.overrides[prefix] ?? defaultBits
+            let input=w.dim(-1)*32/bits
+            return .init(weight:w,scales:scale,biases:bias,bits:bits,groupSize:input/scale.dim(-1))
         }
         let value = try QuantizedExpert(gate:projection("gate_proj"),up:projection("up_proj"),down:projection("down_proj"))
         if values[layer,default:[:]].count >= slots,
@@ -165,6 +160,7 @@ private final class BoundedReferenceSwitch: SwitchGLU {
         self.store=store;self.layer=layer;self.readWorkers=readWorkers
         super.init(inputDims:1,hiddenDims:1,numExperts:1)
     }
+    override func items() -> ModuleItems {ModuleItems(values:[:])}
     override func callAsFunction(_ x:MLXArray,_ indices:MLXArray)->MLXArray {
         defer{store.finishLayer()}
         do {
@@ -178,7 +174,7 @@ private final class BoundedReferenceSwitch: SwitchGLU {
             }
             let mapping=Dictionary(uniqueKeysWithValues:selected.enumerated().map{($0.element,UInt32($0.offset))})
             let compact=MLXArray(routing.map{mapping[Int($0)]!}).reshaped(indices.shape)
-            let result=store.reference ? try QuantizedExpert.upstream(x,experts:weights,indices:indices,bankIndices:selected,totalExperts:256) : QuantizedExpert.gathered(x,experts:weights,indices:compact,totalExperts:256)
+            let result=store.reference ? try QuantizedExpert.upstream(x,experts:weights,indices:indices,bankIndices:selected,totalExperts:store.reader.manifest.model.experts) : QuantizedExpert.gathered(x,experts:weights,indices:compact,totalExperts:store.reader.manifest.model.experts)
             eval(result);return result
         } catch {
             store.failure=error
@@ -187,95 +183,9 @@ private final class BoundedReferenceSwitch: SwitchGLU {
     }
 }
 
-private final class StreamedMoE: Module, UnaryLayer {
-    @ModuleInfo(key:"gate") var gate: Linear
-    @ModuleInfo(key:"shared_expert") var shared: Module
-    @ModuleInfo(key:"shared_expert_gate") var sharedGate: Linear
-    private let store: ExpertStore
-    private let layer: Int
-    private let topK: Int
-    private let readWorkers: Int
-    init(store: ExpertStore, layer: Int, topK: Int, readWorkers: Int, shared:Module) {
-        self.store = store;self.layer = layer;self.topK = topK
-        self.readWorkers = readWorkers
-        _gate.wrappedValue = Linear(2048,256,bias:false)
-        _shared.wrappedValue = shared
-        _sharedGate.wrappedValue = Linear(2048,1,bias:false)
-        super.init()
-    }
-    func callAsFunction(_ x: MLXArray) -> MLXArray {
-        guard store.failure == nil else {return MLXArray.zeros(x.shape,dtype:x.dtype)}
-        if store.reference || store.gatheredDecode,let block=store.referenceBlocks[layer] {return block(x)}
-        defer{store.finishLayer()}
-        do {
-            let probabilities = softmax(gate(x),axis:-1,precise:true)
-            // Reference top-k chain from MLX Swift LM's MoERouterTopK.swift (MIT).
-            // Its fused helper is package-private; preserve the reference semantics here.
-            let kth = probabilities.dim(-1)-topK
-            let indices = argPartition(probabilities,kth:kth,axis:-1)[.ellipsis,kth...]
-            let selected = takeAlong(probabilities,indices,axis:-1)
-            let scores = selected/selected.sum(axis:-1,keepDims:true)
-            let rows = x.size/2048,flat = x.reshaped(rows,2048)
-            let routing = indices.reshaped(rows,topK).asType(.int32).asArray(Int32.self)
-            let rankOutputs = (0..<topK).map{_ in MLXArray.zeros([rows,2048],dtype:x.dtype)}
-            let sharedOutput = sigmoid(sharedGate(x))*(shared as! any UnaryLayer)(x)
-            asyncEval(sharedOutput)
-            if store.reference {
-                let selected = Set(routing.map(Int.init)).sorted()
-                store.prefetch(layer:layer,selected:selected,workers:readWorkers)
-                var weights = [QuantizedExpert]()
-                for (position,expert) in selected.enumerated() {
-                    weights.append(try store.get(layer:layer,expert:expert))
-                    store.prefetch(layer:layer,selected:Array(selected.dropFirst(position+1)),workers:readWorkers)
-                }
-                let mapping = Dictionary(uniqueKeysWithValues:selected.enumerated().map{($0.element,UInt32($0.offset))})
-                let compact = MLXArray(routing.map{mapping[Int($0)]!}).reshaped(rows,topK)
-                let projected = try QuantizedExpert.upstream(flat,experts:weights,indices:compact)
-                let reduced = weightedExpertSum(projected,scores.reshaped(rows,topK));eval(reduced)
-                return reduced.reshaped(x.shape)+sharedOutput
-            }
-            if rows == 1 && store.gatheredDecode {
-                var results = [MLXArray]()
-                for row in 0..<rows {
-                    let selected = (0..<topK).map{Int(routing[row*topK+$0])}
-                    store.prefetch(layer:layer,selected:selected,workers:readWorkers)
-                    var weights = [QuantizedExpert]()
-                    for (position,expert) in selected.enumerated() {
-                        weights.append(try store.get(layer:layer,expert:expert))
-                        store.prefetch(layer:layer,selected:Array(selected.dropFirst(position+1)),workers:readWorkers)
-                    }
-                    let compact = MLXArray((0..<topK).map(UInt32.init)).reshaped(1,topK)
-                    let projected = QuantizedExpert.gathered(flat[row..<(row+1)],experts:weights,indices:compact)
-                    let result = weightedExpertSum(projected,scores.reshaped(rows,topK)[row..<(row+1)])
-                    eval(result);results.append(result)
-                }
-                return concatenated(results,axis:0).reshaped(x.shape)+sharedOutput
-            }
-            // Group every selected row by expert. Each fetched expert serves the whole chunk.
-            var groups = [Int:[(Int,Int)]]()
-            for row in 0..<rows {for rank in 0..<topK {groups[Int(routing[row*topK+rank]),default:[]].append((row,rank))}}
-            let resident = groups.keys.filter{store.isResident(layer:layer,expert:$0)}.sorted()
-            let missing = groups.keys.filter{!store.isResident(layer:layer,expert:$0)}.sorted()
-            let ordered = resident+missing
-            store.prefetch(layer:layer,selected:missing,workers:readWorkers)
-            for (position,expert) in ordered.enumerated() {
-                let assignments = groups[expert]!,weights = try store.get(layer:layer,expert:expert)
-                store.prefetch(layer:layer,selected:Array(ordered.dropFirst(position+1)),workers:readWorkers)
-                let rowIDs = MLXArray(assignments.map{Int32($0.0)})
-                let result = weights(flat[rowIDs]);eval(result)
-                for (index,assignment) in assignments.enumerated() {rankOutputs[assignment.1][assignment.0] = result[index]}
-            }
-            let combined = (stacked(rankOutputs,axis:1)*scores.reshaped(rows,topK,1)).sum(axis:1).reshaped(x.shape)
-            return combined+sharedOutput
-        } catch {
-            // UnaryLayer cannot throw. The runner checks this before accepting any logits/state.
-            store.failure = error;return MLXArray.zeros(x.shape,dtype:x.dtype)
-        }
-    }
-}
-
 @MainActor final class ChronosModel {
-    let model: Qwen35MoEModel
+    let model: any LLMModel
+    let schema:MoEModelSchema
     let reader: ParticleV2Reader
     private let store: ExpertStore
     private(set) var cache: [KVCache] = []
@@ -285,12 +195,21 @@ private final class StreamedMoE: Module, UnaryLayer {
     private(set) var currentLogits: MLXArray?
     private var checkpointLogits: MLXArray?
     private var evaluations=0
+    private var promptRowsLimit=128
     var expertReadBytes: Int64 {store.readBytes}
     var expertHits: Int {store.hits}
     init(path: URL, slots: Int, activeExperts: Int, readWorkers: Int = 2, cancellation: ParticleCancellation? = nil) throws {
-        guard (8...32).contains(slots),(2...8).contains(activeExperts),[1,2,4].contains(readWorkers) else {throw ModelLibraryError.invalid("Invalid Chronos cache, expert count or read-worker setting.")}
+        guard (8...32).contains(slots),(1...64).contains(activeExperts),[1,2,4].contains(readWorkers) else {throw ModelLibraryError.invalid("Invalid Chronos cache, expert count or read-worker setting.")}
         reader = try ParticleV2Reader(path:path)
-        guard reader.manifest.model.architecture == .qwen35MoE else {throw ModelLibraryError.incompatible("This worker requires a Qwen3.5 MoE pack.")}
+        guard [.qwen35MoE,.qwen3MoE].contains(reader.manifest.model.architecture),activeExperts <= reader.manifest.model.activeExperts else {throw ModelLibraryError.incompatible("This worker needs a supported MLX MoE pack and a valid expert selection.")}
+        let commonBytes=reader.manifest.tensors.filter{$0.layer == nil}.reduce(Int64(0)){$0+$1.bytes}
+        let strides=Dictionary(grouping:reader.manifest.tensors.filter{$0.layer != nil},by:{$0.layer!}).values.compactMap{$0.first?.expertStride}.reduce(0,+)
+        guard commonBytes+strides*Int64(slots)+512*1024*1024 < Int64(ProcessInfo.processInfo.physicalMemory)*3/4 else {throw ModelLibraryError.incompatible("The resident weights and selected expert cache exceed this Mac’s memory allowance. Choose a smaller model/quantization or fewer cache slots.")}
+        let maximumStride=reader.manifest.tensors.compactMap(\.expertStride).max() ?? 1
+        let transientBudget=min(Int64(2_147_483_648),Int64(ProcessInfo.processInfo.physicalMemory)/4)
+        let selectedCapacity=Int(transientBudget/(2*maximumStride))
+        guard selectedCapacity >= activeExperts else {throw ModelLibraryError.incompatible("This expert selection exceeds the temporary buffer budget. Choose fewer active experts or a smaller model.")}
+        if selectedCapacity < reader.manifest.model.experts {promptRowsLimit=max(1,min(128,selectedCapacity/activeExperts))}
         try ArchitectureRegistry.validateChronosLayout(reader.manifest)
         try reader.verifyResidentFiles()
         try ArchitectureRegistry.validateChronosTokenizer(tokenizer:ArchitectureRegistry.boundedData(path.appendingPathComponent("tokenizer/tokenizer.json"),limit:64*1024*1024),configuration:ArchitectureRegistry.boundedData(path.appendingPathComponent("tokenizer/tokenizer_config.json"),limit:1_048_576))
@@ -300,55 +219,51 @@ private final class StreamedMoE: Module, UnaryLayer {
         })
         let template = try String(contentsOf:path.appendingPathComponent("tokenizer/chat_template.jinja"),encoding:.utf8)
         let report = try ArchitectureRegistry.inspectMLX(configuration:config,tensors:records,template:template,repository:nil,revision:nil,sourceBytes:reader.manifest.model.sourceBytes)
-        guard report.conversionSupported else {throw ModelLibraryError.incompatible(report.reason)}
-        var runtimeConfig=config
-        if activeExperts != 8 {
-            guard var object=try JSONSerialization.jsonObject(with:config) as? [String:Any],var text=object["text_config"] as? [String:Any] else {throw ModelLibraryError.invalid("Missing runtime routing configuration.")}
-            // Explicit experimental routing preference; native source metadata
-            // and quantized checkpoint bytes remain unchanged.
-            text["num_experts_per_tok"]=activeExperts;object["text_config"]=text
-            runtimeConfig=try JSONSerialization.data(withJSONObject:object)
+        guard report.conversionSupported,let checked=report.descriptor,
+              checked.architecture == reader.manifest.model.architecture,checked.layers == reader.manifest.model.layers,
+              checked.experts == reader.manifest.model.experts,checked.activeExperts == reader.manifest.model.activeExperts,
+              checked.quantization == reader.manifest.model.quantization else {throw ModelLibraryError.incompatible(report.reason)}
+        schema=try MoEModelSchema(configuration:config)
+        var object=schema.root,text=schema.text
+        text["num_experts_per_tok"]=activeExperts
+        if schema.architecture == .qwen3MoE {
+            text["head_dim"]=schema.headDim
+            text["intermediate_size"]=text["intermediate_size"] ?? schema.intermediate
+            text["decoder_sparse_step"]=text["decoder_sparse_step"] ?? 1
+            text["mlp_only_layers"]=text["mlp_only_layers"] ?? [Int]()
         }
-        let configuration = try JSONDecoder().decode(Qwen35Configuration.self,from:runtimeConfig)
-        // Host demand reads and evaluated router IDs cannot be captured inside a static graph.
+        if schema.architecture == .qwen35MoE {object["text_config"]=text} else {object=text}
+        if schema.architecture == .qwen3MoE,var rope=object["rope_scaling"] as? [String:Any],rope["type"] == nil,let kind=rope["rope_type"] {rope["type"]=kind;object["rope_scaling"]=rope}
+        let runtimeConfig=try JSONSerialization.data(withJSONObject:object)
         MLX.compile(enable:false)
-        model = Qwen35MoEModel(configuration)
-        store = ExpertStore(reader:reader,slots:slots)
-        store.cancelled = {cancellation?.isCancelled ?? false}
+        switch schema.architecture {
+        case .qwen35MoE:model=Qwen35MoEModel(try JSONDecoder().decode(Qwen35Configuration.self,from:runtimeConfig))
+        case .qwen3MoE:model=Qwen3MoEModel(try JSONDecoder().decode(Qwen3MoEConfiguration.self,from:runtimeConfig))
+        default:throw ModelLibraryError.incompatible("No MLX streaming graph for this pack.")
+        }
+        store=ExpertStore(reader:reader,slots:slots)
+        store.cancelled={cancellation?.isCancelled ?? false}
         let originals=Dictionary(uniqueKeysWithValues:model.namedModules())
-        var referenceModules=[Int:Module]()
-        for layer in 0..<40 {
-            let key="language_model.model.layers.\(layer).mlp"
-            guard let original=originals[key],let unary=original as? any UnaryLayer else {throw ModelLibraryError.invalid("The upstream reference MoE graph changed.")}
+        for layer in 0..<schema.layers {
+            let key=schema.prefix+"model.layers.\(layer).mlp"
+            guard let original=originals[key],let unary=original as? any UnaryLayer else {throw ModelLibraryError.invalid("The bundled MoE graph does not expose the required router.")}
             try original.update(modules:.unflattened([("switch_mlp",BoundedReferenceSwitch(store:store,layer:layer,readWorkers:readWorkers) as Module)]),verify:.none)
-            referenceModules[layer]=original;store.referenceBlocks[layer]=unary
+            store.referenceBlocks[layer]=unary
         }
-        let replacements: [(String,Module)] = try (0..<40).map{layer in
-            let key="language_model.model.layers.\(layer).mlp"
-            guard let shared=originals[key+".shared_expert"],shared is any UnaryLayer else {throw ModelLibraryError.invalid("The upstream shared-expert graph changed.")}
-            return(key,StreamedMoE(store:store,layer:layer,topK:activeExperts,readWorkers:readWorkers,shared:shared))
-        }
-        try model.update(modules:.unflattened(replacements),verify:.none)
-        guard !model.parameters().flattened().contains(where: {$0.0.contains(".switch_mlp.")}) else {throw ModelLibraryError.invalid("Routed weights were not replaced before model evaluation.")}
+        // Keep the original router, normalization, shared branch and reduction.
+        // Replace only the expert-bank leaf with demand-streamed quantized rows.
+        guard !model.parameters().flattened().contains(where:{$0.0.contains(".switch_mlp.")}) else {throw ModelLibraryError.invalid("Routed tensors must not remain resident.")}
         var weights = [String:MLXArray]()
         for tensor in reader.manifest.tensors where tensor.layer == nil {
             let (_,data) = try reader.residentTensor(tensor.name)
             weights[tensor.name] = MLXArray(data,tensor.shape,dtype:try ExpertStore.dtype(tensor.dtype))
         }
         weights = model.sanitize(weights:weights)
-        let overrides = reader.manifest.model.quantization.overrides
         quantize(model:model,filter:{name,_ -> (groupSize:Int,bits:Int,mode:QuantizationMode)? in
-            weights[name+".scales"] == nil ? nil : (64,overrides[name] ?? 3,.affine)
+            guard weights[name+".scales"] != nil,let q=self.schema.quantization(for:name) else{return nil}
+            return (q.group,q.bits,.affine)
         })
         try model.update(parameters:.unflattened(weights),verify:.all)
-        let residentModules=Dictionary(uniqueKeysWithValues:model.namedModules())
-        for (layer,original) in referenceModules {
-            let prefix="language_model.model.layers.\(layer).mlp."
-            let replacements=try ["gate","shared_expert","shared_expert_gate"].map {name -> (String,Module) in
-                guard let module=residentModules[prefix+name] else {throw ModelLibraryError.invalid("A resident reference module is missing.")};return(name,module)
-            }
-            try original.update(modules:.unflattened(replacements),verify:.none)
-        }
         eval(model.parameters());try model.prepare();cache = try model.newCache(parameters:nil)
     }
     func reset() throws {cache = try model.newCache(parameters:nil);checkpoint = [];tokens = [];checkpointPosition = 0;store.failure = nil;currentLogits = nil;checkpointLogits = nil}
@@ -359,7 +274,7 @@ private final class StreamedMoE: Module, UnaryLayer {
         if common == tokens.count {return common}
         if checkpointPosition > 0,common >= checkpointPosition {
             for (index,state) in checkpoint {cache[index] = state.copy()}
-            for (index,state) in cache.enumerated() where (index+1).isMultiple(of:4) {
+            for (index,state) in cache.enumerated() where schema.fullAttentionLayers.contains(index) {
                 let amount = state.offset-checkpointPosition
                 guard amount >= 0,state.trim(amount) == amount else {try reset();return 0}
             }
@@ -369,12 +284,17 @@ private final class StreamedMoE: Module, UnaryLayer {
     }
     func saveCheckpoint() {
         checkpoint.removeAll(keepingCapacity:true)
-        checkpoint = cache.enumerated().filter{!($0.offset+1).isMultiple(of:4)}.map{($0.offset,$0.element.copy())}
+        checkpoint = cache.enumerated().filter{!schema.fullAttentionLayers.contains($0.offset)}.map{($0.offset,$0.element.copy())}
         checkpointPosition = tokens.count
         checkpointLogits = currentLogits
     }
     func evaluate(_ input: [Int]) throws -> MLXArray {
         guard !input.isEmpty,input.count <= 128 else {throw ModelLibraryError.invalid("Invalid prompt chunk size.")}
+        if input.count > promptRowsLimit {
+            var last:MLXArray?
+            for offset in stride(from:0,to:input.count,by:promptRowsLimit) {last=try evaluate(Array(input[offset..<min(input.count,offset+promptRowsLimit)]))}
+            return last!
+        }
         return try autoreleasepool {
             let output=model(MLXArray(input.map(Int32.init)).expandedDimensions(axis:0),cache:cache)
             let last=output[0,-1]

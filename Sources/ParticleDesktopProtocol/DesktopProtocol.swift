@@ -11,7 +11,7 @@ public struct DesktopCapabilities: Codable, Sendable, Equatable {
     public let nativeExperts: Int
     public let protocolVersion: Int
     enum CodingKeys: String,CodingKey {case architecture,tools,reasoning;case contextLimit="context_limit",nativeExperts="native_experts",protocolVersion="protocol_version"}
-    public var valid: Bool {protocolVersion == 2 && ["sarvam_moe","qwen3_5_moe"].contains(architecture) && (4096...4_194_304).contains(contextLimit) && (1...4096).contains(nativeExperts)}
+    public var valid: Bool {protocolVersion == 2 && ["sarvam_moe","qwen3_5_moe","qwen3_moe"].contains(architecture) && (4096...4_194_304).contains(contextLimit) && (1...4096).contains(nativeExperts)}
 }
 
 /// Newline-delimited JSON only on the opt-in desktop transport. Never carries secrets.
