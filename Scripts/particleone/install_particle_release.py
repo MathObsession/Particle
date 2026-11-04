@@ -67,5 +67,6 @@ def main():
     retention=cleanup(ROOT,release['version'],release['build'])
     if retention['active_older_copies']:raise RuntimeError('Close older Particle copies and run cleanup_releases.py; no active app was removed.')
     report={'older_release_cleanup':retention,'app':str(target),'version':value['CFBundleShortVersionString'],'build':value['CFBundleVersion'],'model':str(model) if model_manifest is not None else None,'updated_workspaces':changed,'same_bundle_identifier':True,'same_update_key':True,'weights_copied':0,'user_transcripts_and_memories_preserved':True}
-    (ROOT/('docs/particleone/validation-'+release['version'])/'installation.json').write_text(json.dumps(report,indent=2)+'\n');print(json.dumps(report,indent=2))
+    evidence=ROOT/('docs/particleone/validation-'+release['version']);evidence.mkdir(parents=True,exist_ok=True)
+    (evidence/'installation.json').write_text(json.dumps(report,indent=2)+'\n');print(json.dumps(report,indent=2))
 if __name__=='__main__':main()

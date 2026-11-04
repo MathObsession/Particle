@@ -22,7 +22,7 @@ import ParticleModelLibrary
             checks["import_has_persistent_ready_job"]=model.library.jobs.last?.localSource == source.path && model.library.jobs.last?.stage == .ready
             model.useInstalledModel(installed)
             checks["conversation_bound_to_imported_model"]=model.selected?.modelID == installed.id && model.settings.modelID == installed.id
-            var settings=model.settings;settings.context=4096;settings.maxNew=32;settings.temperature=0;settings.responseStyle = .direct
+            var settings=model.settings;settings.context=4096;settings.maxNew=32;settings.responseStyle = .direct
             model.updateSettings(settings);model.loadModel()
             checks["native_worker_handshake"]=await wait(120){model.connected || model.notice != nil} && model.connected
             guard model.connected else {throw ModelLibraryError.invalid(model.notice ?? "The native model did not connect.")}
