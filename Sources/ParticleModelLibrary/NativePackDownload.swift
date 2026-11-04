@@ -34,6 +34,7 @@ public enum NativePackDownload {
         let template=try await metadata("tokenizer/chat_template.jinja",262_144)
         let report=try ArchitectureRegistry.inspectV2Metadata(manifest,configuration:configuration,tokenizer:tokenizer,tokenizerConfiguration:tokenizerConfiguration,template:template)
         guard report.conversionSupported else {throw ModelLibraryError.incompatible(report.reason)}
+        try source.verifyIdentity()
         return .init(layout:try copyPlan(manifest,sourceFiles:source.files),manifest:raw,report:report)
     }
     static func copyPlan(_ manifest:ParticleV2Manifest,sourceFiles:[HubFile]) throws -> MLXPackPlan {
