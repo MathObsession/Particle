@@ -6,7 +6,7 @@ import Metal
 import CryptoKit
 import ParticleModelLibrary
 import ParticleFormat
-@testable import ParticleMLXCLI
+@testable import ParticleMLXRuntime
 private final class MLXTestBundleAnchor: NSObject {}
 
 @Suite("Synthetic MLX streaming kernels",.serialized) @MainActor struct StreamedExpertTests {

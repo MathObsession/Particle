@@ -35,8 +35,9 @@ let package = Package(
             revision: "1d2c90827e9c3908269d810d055fb03b7da5fd53"),
     ],
     targets: [
-        .testTarget(name: "ParticleMLXTests", dependencies: ["ParticleMLXCLI", "ParticleModelLibrary", "ParticleFormat", .product(name: "MLX", package: "mlx-swift"), .product(name: "MLXNN", package: "mlx-swift")], path: "Tests/ParticleMLXTests"),
-        .executableTarget(name: "ParticleMLXCLI", dependencies: ["ParticleModelLibrary", "ParticleCore", "ParticleDesktopProtocol", .product(name: "MLXLLM", package: "mlx-swift-lm"), .product(name: "MLXLMCommon", package: "mlx-swift-lm"), .product(name: "MLX", package: "mlx-swift"), .product(name: "MLXNN", package: "mlx-swift"), .product(name: "Tokenizers", package: "swift-transformers"), .product(name: "Hub", package: "swift-transformers")], path: "Sources/ParticleMLXCLI"),
+        .testTarget(name: "ParticleMLXTests", dependencies: ["ParticleMLXRuntime", "ParticleModelLibrary", "ParticleFormat", .product(name: "MLX", package: "mlx-swift"), .product(name: "MLXNN", package: "mlx-swift")], path: "Tests/ParticleMLXTests"),
+        .target(name: "ParticleMLXRuntime", dependencies: ["ParticleModelLibrary", "ParticleCore", "ParticleDesktopProtocol", .product(name: "MLXLLM", package: "mlx-swift-lm"), .product(name: "MLXLMCommon", package: "mlx-swift-lm"), .product(name: "MLX", package: "mlx-swift"), .product(name: "MLXNN", package: "mlx-swift"), .product(name: "Tokenizers", package: "swift-transformers"), .product(name: "Hub", package: "swift-transformers")], path: "Sources/ParticleMLXCLI", exclude: ["Command"]),
+        .executableTarget(name: "ParticleMLXCLI", dependencies: ["ParticleMLXRuntime"], path: "Sources/ParticleMLXCLI/Command"),
         .executableTarget(name: "ParticleLibraryCLI", dependencies: ["ParticleModelLibrary", "ParticlePackCore", "ParticleGGUF", "ParticleFormat"], path: "Sources/ParticleLibraryCLI"),
         .target(name: "ParticleModelLibrary", dependencies: ["ParticleFormat", "ParticleGGUF", "ParticleDesktopProtocol"], path: "Sources/ParticleModelLibrary"),
         .testTarget(name: "ModelLibraryTests", dependencies: ["ParticleModelLibrary", "ParticleOneCore"], path: "Tests/ModelLibraryTests", resources: [.copy("Fixtures")]),

@@ -1,6 +1,6 @@
 import Foundation
 import Testing
-@testable import ParticleMLXCLI
+@testable import ParticleMLXRuntime
 
 @Suite("Chronos UTF-8 streaming") struct ChronosTextTests {
     private func spelling(_ bytes:[UInt8]) -> String {

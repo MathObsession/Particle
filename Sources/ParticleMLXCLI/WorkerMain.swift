@@ -9,7 +9,7 @@ import ParticleCore
 import ParticleModelLibrary
 import ParticleDesktopProtocol
 
-@MainActor @main struct ParticleMLXCLI {
+@MainActor public enum ParticleMLXWorker {
     struct Options {
         var model = "",prompt = "",context = 32768,maxNew = 256,slots = 12,experts = 8,chunk = 128,budget = 0,readWorkers = 2
         var temperature: Float = 1.0
@@ -52,7 +52,7 @@ import ParticleDesktopProtocol
     }
     static func event(_ payload:[String:Any]) {if let data = try? JSONSerialization.data(withJSONObject:payload,options:.sortedKeys){FileHandle.standardOutput.write(data+Data([10]))}}
     static func log(_ text:String) {FileHandle.standardError.write(Data((text+"\n").utf8))}
-    static func main() async {
+    public static func main() async {
         if CommandLine.arguments.contains("--help") {
             print("ParticleMLXCLI --model <v2.particle> --prompt <text> [--interactive] [--desktop-events] --allow-unqualified-run\n--max-context 32768 --max-new 256 --active-experts 8 --expert-cache-slots 12 --prefill-chunk 128 --reasoning-budget 0\n--expert-execution gathered (upstream math; default) | grouped (experimental; full-logit parity has failed)\nExperimental Qwen3.5 MoE streaming worker. Native eight-expert routing is the reference; reduced counts change the model.");return
         }
