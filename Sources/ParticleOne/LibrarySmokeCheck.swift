@@ -22,7 +22,7 @@ import ParticleModelLibrary
             checks["import_has_persistent_ready_job"]=model.library.jobs.last?.localSource == source.path && model.library.jobs.last?.stage == .ready
             model.useInstalledModel(installed)
             checks["conversation_bound_to_imported_model"]=model.selected?.modelID == installed.id && model.settings.modelID == installed.id
-            var settings=model.settings;settings.context=4096;settings.maxNew=32;settings.responseStyle = .direct
+            var settings=model.settings;settings.context=4096;settings.maxNew=64;settings.responseStyle = .direct
             model.updateSettings(settings);model.loadModel()
             checks["native_worker_handshake"]=await wait(120){model.connected || model.notice != nil} && model.connected
             guard model.connected else {throw ModelLibraryError.invalid(model.notice ?? "The native model did not connect.")}
@@ -33,6 +33,7 @@ import ParticleModelLibrary
             checks["source_manifest_unchanged"]=(try ArchitectureRegistry.boundedData(source.appendingPathComponent("manifest.json"),limit:16*1024*1024)) == before
             checks["no_model_payload_copy"]=(try FileManager.default.contentsOfDirectory(at:model.library.managedRoot,includingPropertiesForKeys:nil)).allSatisfy{$0.pathExtension != "particle"}
         } catch {detail=error.localizedDescription}
+        if !checks.values.allSatisfy({$0}),detail.isEmpty {detail=model.notice ?? ([model.status]+model.diagnostics.suffix(2)).joined(separator:"\n")}
         model.unload();checks["owned_worker_stopped"]=await wait(30){model.modelProcessID == nil && !model.loading}
         let report:[String:Any]=["passed":detail.isEmpty && checks.values.allSatisfy{$0},"checks":checks,"detail":detail,"mode":"Native app import, full pack verification and chat; isolated data; one packaged worker; no model copy"]
         if let data=try? JSONSerialization.data(withJSONObject:report,options:[.prettyPrinted,.sortedKeys]) {try? data.write(to:URL(fileURLWithPath:output))}

@@ -76,7 +76,7 @@ struct ModelLibraryView: View {
                     HStack(alignment:.top,spacing:16) {
                         Image(systemName:"cpu").font(.system(size:25)).foregroundStyle(Design.green).padding(.top,4)
                         VStack(alignment:.leading,spacing:7) {
-                            HStack{Text(listing.descriptor.name).font(Design.heading(22));if listing.isDefault {Text("DEFAULT").font(Design.medium(8)).tracking(1).padding(6).background(Design.line,in:Capsule())}}
+                            HStack{Text(listing.descriptor.name).font(Design.heading(22));if listing.isDefault {Text("DEFAULT").font(Design.medium(8)).tracking(1).padding(6).background(Design.line,in:Capsule())} else if listing.descriptor.architecture == .qwen35MoE {Text("EARLY ACCESS").font(Design.medium(8)).tracking(0.6).padding(6).background(Design.line,in:Capsule())}}
                             Text(listing.descriptor.provenance.repository ?? "Local model").font(Design.body(10)).foregroundStyle(Design.muted)
                             if recommended,let reason=ModelRecommendations.reason(for:listing.descriptor) {Text(reason).font(Design.body(11)).foregroundStyle(Design.muted).fixedSize(horizontal:false,vertical:true)}
                             Text(listing.descriptor.architecture == .sarvam ? "≈30B total parameters" : "≈35B total · ≈3B active parameters").font(Design.body(10)).foregroundStyle(Design.muted)
@@ -84,7 +84,7 @@ struct ModelLibraryView: View {
                             Text(ByteCountFormatter.string(fromByteCount:listing.descriptor.sourceBytes,countStyle:.file)+" download · "+(listing.descriptor.provenance.license ?? "See model license")).font(Design.body(10)).foregroundStyle(Design.muted)
                             Text("Allow "+ByteCountFormatter.string(fromByteCount:listing.descriptor.sourceBytes+2_147_483_648,countStyle:.file)+" free for installation").font(Design.body(10)).foregroundStyle(Design.muted)
                             let profile=ModelRuntimeProfile(model:listing.descriptor,physicalMemory:ProcessInfo.processInfo.physicalMemory)
-                            Text("Streamed experts · \(profile.context.formatted()) context on this Mac · Internal SSD recommended").font(Design.body(10)).foregroundStyle(Design.muted)
+                            Text((listing.descriptor.supportsTools ? "Chat and Code · " : "Chat only · ")+"\(profile.context.formatted()) context on this Mac · Internal SSD recommended").font(Design.body(10)).foregroundStyle(Design.muted)
                             if let card = listing.card {Text("\(card.downloads.formatted()) downloads · \(card.likes.formatted()) likes on Hugging Face").font(Design.body(9)).foregroundStyle(Design.muted)}
                             if let source = listing.descriptor.provenance.repository,let url = URL(string:"https://huggingface.co/"+source) {Link("Model card ↗",destination:url).font(Design.body(10)).tint(Design.green)}
                         }

@@ -21,7 +21,7 @@ public enum ArchitectureRegistry {
     // Qualification is shipped with the engine, never supplied by a remote model card.
     public static let adapters: [ArchitectureAdapter] = [
         .init(architecture: .sarvam, worker: "ParticleCLI", qualification: .qualified, supportsTools: true),
-        .init(architecture: .qwen35MoE, worker: "ParticleMLXCLI", qualification: .experimental, supportsTools: false)
+        .init(architecture: .qwen35MoE, worker: "ParticleMLXCLI", qualification: .qualified, supportsTools: false)
     ]
     public static func adapter(for architecture: ModelArchitecture) -> ArchitectureAdapter {
         adapters.first { $0.architecture == architecture }!

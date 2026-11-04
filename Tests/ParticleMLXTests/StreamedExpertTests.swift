@@ -2,6 +2,7 @@ import Foundation
 import Testing
 import MLX
 import MLXNN
+import MLXLMCommon
 import Metal
 import CryptoKit
 import ParticleModelLibrary
@@ -10,6 +11,14 @@ import ParticleFormat
 private final class MLXTestBundleAnchor: NSObject {}
 
 @Suite("Synthetic MLX streaming kernels",.serialized) @MainActor struct StreamedExpertTests {
+    @Test(.enabled(if:MTLCreateSystemDefaultDevice() != nil,"Requires a Metal device; no trained model weights."))
+    func desktopSamplingAcceptsSingleVectorLogits() throws {
+        GPU.metallib=try MLXRuntimeResources.metallib(anchors:[Bundle(for:MLXTestBundleAnchor.self).bundleURL])
+        let logits=MLXArray((0..<64).map{Float($0)/8}).asType(.bfloat16)
+        let sampler=GenerateParameters(temperature:1,topP:0.95,topK:20).sampler()
+        let token=ParticleMLXWorker.sample(logits:logits,using:sampler)
+        #expect((0..<64).contains(token))
+    }
     @Test(.enabled(if:MTLCreateSystemDefaultDevice() != nil,"Requires a Metal device; no trained model weights.")) func threeBitExpertMatchesDequantizedReferenceAndSurvivesEviction() throws {
         GPU.metallib = try MLXRuntimeResources.metallib(anchors:[Bundle(for:MLXTestBundleAnchor.self).bundleURL])
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("particle-mlx-tests-"+UUID().uuidString)

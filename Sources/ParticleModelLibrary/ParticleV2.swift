@@ -55,7 +55,7 @@ public struct ParticleV2Manifest: Codable, Equatable, Sendable {
         }
         for (path, file) in files.merging(sourceFiles, uniquingKeysWith: { a, _ in a }) {
             try ParticleFormat.validatePath(path)
-            guard path != "manifest.json", path != "verified-install.json", path != "install-progress.json",
+            guard path != "manifest.json", path != "verified-install.json", path != "install-progress.json",path != "_ingest_gaps.bin",path != "pack.lock",
                   file.bytes >= 0, ParticleFormat.digestIsValid(file.sha256) else { throw ModelLibraryError.invalid("Invalid pack file record.") }
         }
         var names = Set<String>()

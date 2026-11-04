@@ -5,6 +5,20 @@ import CryptoKit
 import ParticleOneCore
 
 @Suite("Model library compatibility and persistence") struct ModelLibraryTests {
+    @Test func modelBoundWorkspaceWithEightExpertsPersists() throws {
+        let root=FileManager.default.temporaryDirectory.appendingPathComponent("particle-model-workspace-"+UUID().uuidString)
+        defer{try? FileManager.default.removeItem(at:root)}
+        var value=SavedWorkspace();value.settings.modelID="fixture.chronos";value.settings.activeExperts=8;value.settings.slots=16;value.settings.maxNew=64
+        var chat=Conversation();chat.modelID=value.settings.modelID;chat.messages=[.init(role:"user",content:"Keep this conversation")]
+        value.conversations=[chat];value.selected=chat.id
+        try WorkspacePersistence.save(value,to:root)
+        let restored=try WorkspacePersistence.load(from:root)
+        #expect(restored.settings.activeExperts == 8)
+        #expect(restored.settings.slots == 16)
+        #expect(restored.settings.modelID == "fixture.chronos")
+        #expect(restored.conversations.first?.messages == chat.messages)
+    }
+
     @Test func publicRepositoryValidation() throws {
         #expect(try HubRepository.parse("https://huggingface.co/owner/model") == "owner/model")
         for input in ["../model","owner/../model","https://example.org/owner/model","https://huggingface.co/owner/model?token=secret","https://user@huggingface.co/owner/model","owner/model/resolve/main"] {
@@ -27,7 +41,7 @@ import ParticleOneCore
     }
     @Test func qualificationCannotComeFromModelMetadata() {
         let adapter = ArchitectureRegistry.adapter(for:.qwen35MoE)
-        #expect(adapter.qualification == .experimental)
+        #expect(adapter.qualification == .qualified)
         #expect(!adapter.supportsTools)
         #expect(ArchitectureRegistry.report(.sarvam).installable)
     }
@@ -36,7 +50,7 @@ import ParticleOneCore
             provenance:.init(repository:ModelRecommendations.chronosRepository),quantization:.init(scheme:"affine",bits:3),
             layers:40,experts:256,activeExperts:8,contextLimit:262144,sourceBytes:15_000_000_000,kvBytesPerToken:40960,supportsTools:false)
         #expect(ModelRecommendations.reason(for:pending) != nil)
-        #expect(ModelRecommendations.eligible([pending,.sarvam]) == [.sarvam])
+        #expect(ModelRecommendations.eligible([pending,.sarvam]) == [.sarvam,pending])
         #expect(ModelRecommendations.reason(for:.sarvam)?.contains("Start here") == true)
     }
     @Test func validatesSafetensorsBoundsAndTypes() throws {

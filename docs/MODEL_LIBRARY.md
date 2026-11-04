@@ -20,10 +20,20 @@ curated recommendations appear when their adapters qualify.
 
 ## Qualification
 
-Sarvam's existing adapter remains qualified. The Chronos converter and native
-worker are experimental and hidden from normal installation until numerical,
-conversation-state and performance gates pass. Conversion success is not a
-runtime qualification. No general 2–6 tokens/s guarantee is made.
+Sarvam remains the default for Chat and Code. Chronos is available as an
+**early-access, chat-only** model. Its native eight-expert path has passed
+full-logit/continuation comparisons on short and 512/2,048-token histories,
+plus multi-turn, formatting, Unicode, cancellation and state-restoration checks.
+The exhaustive long-history matrix was stopped at the user's request in favor
+of delivering the app. Longer contexts and sustained speed across every
+workload are not exhaustively qualified. No general 2–6 tokens/s guarantee is made.
+
+A Metal buffer-retention problem was isolated to the validation reference's
+repeated unused quantization graphs: a debugger observed roughly 600 extra
+buffers per reference step, while sampled native streaming steps stayed flat.
+Reference initialization now evaluates only bounded placeholders before
+installing the native quantized tensors. This changes the diagnostic reference,
+not the production streaming weights. Chronos coding tools remain disabled.
 
 The first additional layout is the text-only 40-layer, 256-expert Qwen3.5 MoE
 35B-A3B family with affine 3-bit/group-64 expert weights and 8-bit routing
@@ -43,8 +53,12 @@ it does not requantize or reduce routing.
 
 Remote conversion reads sequential bounded ranges directly into a partial
 destination. It never stages a second full source checkpoint. New transfers
-use at most 16 MiB per range and durable checkpoints every 64 MiB. Resume
-rechecks committed source and destination bytes. Complete source hashes and
+use at most 16 MiB per range and durable checkpoints every 64 MiB. New
+checkpoints reconstruct completed source chunks from local payloads plus a
+bounded on-disk header/padding archive, avoiding completed network/SD reads.
+Original chunk and complete-file hashes are still checked. Older checkpoints
+retain their original re-read verification path. The temporary archive is removed
+after publication. Complete source hashes and
 payload/expert hashes are verified before atomic publication. Git metadata
 files also verify their pinned Git blob IDs when available. Shard lengths use
 64-bit accounting. Inference and conversion share an exclusive model lease.
@@ -96,15 +110,13 @@ Scripts/particle build -c release --product ParticleLibraryCLI
   --repo Lifeboat78/Chronos-Ornith-1.5-35B-A3B-MLX-3bit
 ```
 
-An explicit development conversion remains unavailable for normal library
-selection while its adapter is unqualified:
+A native lossless conversion can also be started from the CLI:
 
 ```bash
 /Volumes/Particle/Build/Particle/SwiftPM/release/ParticleLibraryCLI convert \
   --repo Lifeboat78/Chronos-Ornith-1.5-35B-A3B-MLX-3bit \
   --revision a982bb2ed776bf0db64375de480a1d0a00475a99 \
-  --output /absolute/path/chronos.particle --resume \
-  --allow-unqualified-conversion
+  --output /absolute/path/chronos.particle --resume
 ```
 
 `ParticleMLXCLI --validate-reference --validation-steps 64` compares all

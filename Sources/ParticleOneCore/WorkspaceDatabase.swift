@@ -23,7 +23,7 @@ public enum WorkspacePersistence {
         return try decode(data)
     }
     public static func save(_ value: SavedWorkspace,to directory: URL) throws {
-        guard value.version==1,value.settings.valid,value.name.count<=80,value.username.count<=80,value.memories.count<=100,value.memories.allSatisfy({!$0.text.isEmpty && $0.text.count<=2000}) else {throw CocoaError(.coderInvalidValue)}
+        guard value.version==1,value.settings.validForPersistence,value.name.count<=80,value.username.count<=80,value.memories.count<=100,value.memories.allSatisfy({!$0.text.isEmpty && $0.text.count<=2000}) else {throw CocoaError(.coderInvalidValue)}
         let db=try Database(directory);defer{db.close()}
         try db.exec("BEGIN IMMEDIATE")
         do {
@@ -46,7 +46,7 @@ public enum WorkspacePersistence {
     }
     private static func decode(_ data: Data) throws -> SavedWorkspace {
         let value=try JSONDecoder().decode(SavedWorkspace.self,from:data)
-        guard value.version==1,value.settings.valid,value.memories.count<=100,value.memories.allSatisfy({!$0.text.isEmpty && $0.text.count<=2000}) else{throw CocoaError(.coderReadCorrupt)}
+        guard value.version==1,value.settings.validForPersistence,value.memories.count<=100,value.memories.allSatisfy({!$0.text.isEmpty && $0.text.count<=2000}) else{throw CocoaError(.coderReadCorrupt)}
         return value
     }
 }

@@ -8,9 +8,11 @@ private struct GeneratedSource: ModelByteSource {
     let identity = "fixture-v1"
     let length: Int64
     let failAt: Int64?
+    var minimumOffset:Int64=0
     var files: [HubFile] { [.init(path:"checkpoint.bin",bytes:length,sha256:nil)] }
     func read(_ path: String, range: Range<Int64>) async throws -> Data {
         if let failAt,range.lowerBound >= failAt {throw CancellationError()}
+        guard range.lowerBound >= minimumOffset else {throw ModelLibraryError.invalid("Completed source bytes were downloaded again.")}
         var data = Data(count:range.count)
         for index in 0..<min(256,data.count) where range.lowerBound+Int64(index) < 256 {data[index] = UInt8(truncatingIfNeeded:range.lowerBound+Int64(index))}
         return data
@@ -75,13 +77,19 @@ private struct GeneratedSource: ModelByteSource {
         let partial = output.appendingPathExtension("partial")
         #expect(FileManager.default.fileExists(atPath:partial.appendingPathComponent("install-progress.json").path))
         let handle = try FileHandle(forWritingTo:partial.appendingPathComponent("common.bin"));try handle.write(contentsOf:Data([255]));try handle.close()
-        let resumed = GeneratedSource(length:length,failAt:nil)
+        let resumed = GeneratedSource(length:length,failAt:nil,minimumOffset:64*1024*1024)
         do {try await MLXPackConverter.convert(source:resumed,plan:layout,output:output,resume:true);Issue.record("Corrupted committed bytes must fail")}
         catch let error as ModelLibraryError {if case .checksum = error {} else {throw error}}
         let range = try #require(layout.ranges.first(where:{$0.file == "common.bin"}))
         let repair = try FileHandle(forWritingTo:partial.appendingPathComponent("common.bin"));try repair.write(contentsOf:sourceBytes(range.offset..<range.offset+range.bytes));try repair.close()
+        let gaps=partial.appendingPathComponent("_ingest_gaps.bin")
+        let corrupt=try FileHandle(forWritingTo:gaps);try corrupt.write(contentsOf:Data([255]));try corrupt.close()
+        do {try await MLXPackConverter.convert(source:resumed,plan:layout,output:output,resume:true);Issue.record("Corrupted source headers must fail")}
+        catch let error as ModelLibraryError {if case .checksum = error {} else {throw error}}
+        let restore=try FileHandle(forWritingTo:gaps);try restore.write(contentsOf:Data([64]));try restore.close()
         try await MLXPackConverter.convert(source:resumed,plan:layout,output:output,resume:true)
         try ParticleV2Reader(path:output).verifyAll()
+        #expect(!FileManager.default.fileExists(atPath:output.appendingPathComponent("_ingest_gaps.bin").path))
         #expect(!FileManager.default.fileExists(atPath:partial.path))
     }
     @Test func nativeDownloadPreservesOriginalManifestAndPayloads() async throws {
@@ -108,6 +116,21 @@ private struct GeneratedSource: ModelByteSource {
         let handle=try FileHandle(forWritingTo:copy.appendingPathComponent("common.bin"));try handle.write(contentsOf:Data([255]));try handle.close()
         await #expect(throws:(any Error).self){try await MLXPackConverter.convert(source:source,plan:layout,output:copy,resume:true,nativeManifest:raw)}
         #expect(try Data(contentsOf:original.appendingPathComponent("manifest.json")) == raw)
+    }
+    @Test func legacyCheckpointWithoutSourceGapArchiveStillResumes() async throws {
+        let root=FileManager.default.temporaryDirectory.appendingPathComponent("particle-legacy-resume-"+UUID().uuidString)
+        try FileManager.default.createDirectory(at:root,withIntermediateDirectories:true);defer{try? FileManager.default.removeItem(at:root)}
+        let output=root.appendingPathComponent("fixture.particle"),length:Int64=68*1024*1024
+        let source=GeneratedSource(length:length,failAt:64*1024*1024),layout=plan(source)
+        do {try await MLXPackConverter.convert(source:source,plan:layout,output:output,resume:false);Issue.record("Expected interruption")}
+        catch is CancellationError {} catch {throw error}
+        let partial=output.appendingPathExtension("partial"),progress=partial.appendingPathComponent("install-progress.json")
+        var legacy=try #require(JSONSerialization.jsonObject(with:Data(contentsOf:progress)) as? [String:Any])
+        legacy.removeValue(forKey:"sourceGaps")
+        try JSONSerialization.data(withJSONObject:legacy).write(to:progress)
+        try FileManager.default.removeItem(at:partial.appendingPathComponent("_ingest_gaps.bin"))
+        try await MLXPackConverter.convert(source:GeneratedSource(length:length,failAt:nil),plan:layout,output:output,resume:true)
+        try ParticleV2Reader(path:output).verifyAll()
     }
     @Test func existingConversationsDecodeWithoutModelBindings() throws {
         var workspace = SavedWorkspace();var conversation = Conversation();conversation.messages = [.init(role:"user",content:"Keep me")]

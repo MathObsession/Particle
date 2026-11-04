@@ -24,7 +24,9 @@ private struct MLXCopyCheckpoint: Codable {
     let identity: String
     let planSHA256: String
     var chunks: [Chunk]
+    var sourceGaps:Bool? = nil
 }
+private struct MLXSourceGap:Sendable {let offset:Int64;let bytes:Int64;let stored:Int64}
 
 public enum MLXPackConverter {
     private static func hash(_ data: Data) -> String { SHA256.hash(data:data).map { String(format:"%02x",$0) }.joined() }
@@ -165,6 +167,49 @@ public enum MLXPackConverter {
             checkpoint = try JSONDecoder().decode(MLXCopyCheckpoint.self,from:ArchitectureRegistry.boundedData(checkpointURL,limit:16*1024*1024))
             guard checkpoint.identity == source.identity,checkpoint.planSHA256 == planHash else { throw ModelLibraryError.invalid("The source or conversion layout changed. This partial pack cannot be resumed.") }
         }
+        if !existed {checkpoint.sourceGaps=true}
+        let gapsEnabled=checkpoint.sourceGaps == true
+        var gaps=[String:[MLXSourceGap]](),gapBytes:Int64=0
+        if gapsEnabled {
+            for file in plan.sourceFiles {
+                var position:Int64=0
+                func appendGap(until end:Int64) throws {
+                    guard end >= position else {throw ModelLibraryError.invalid("Overlapping source ranges.")}
+                    if end > position {
+                        let bytes=end-position
+                        guard bytes <= 256*1024*1024-gapBytes else {throw ModelLibraryError.invalid("Source padding exceeds the bounded resume archive.")}
+                        gaps[file.path,default:[]].append(.init(offset:position,bytes:bytes,stored:gapBytes));gapBytes += bytes
+                    }
+                }
+                for range in plan.ranges.filter({$0.source == file.path}).sorted(by:{$0.offset < $1.offset}) {
+                    guard range.offset >= 0,range.offset <= file.bytes,range.bytes >= 0,range.bytes <= file.bytes-range.offset else {throw ModelLibraryError.invalid("Invalid source range.")}
+                    try appendGap(until:range.offset);position=range.offset+range.bytes
+                }
+                try appendGap(until:file.bytes)
+            }
+        }
+        let gapsName="_ingest_gaps.bin"
+        var gapFD:Int32 = -1
+        if gapsEnabled {
+            if existed {gapFD=try ParticleIO.openRelative(root:root,path:gapsName,flags:O_RDWR)}
+            else {gapFD=openat(root,gapsName,O_RDWR|O_CREAT|O_EXCL|O_NOFOLLOW|O_CLOEXEC,0o600)}
+            guard gapFD >= 0 else {throw ModelLibraryError.invalid("Cannot open the source resume archive.")}
+        }
+        defer{if gapFD >= 0{close(gapFD)}}
+        if gapsEnabled {
+            if !existed {guard ftruncate(gapFD,gapBytes) == 0 else {throw ModelLibraryError.invalid("Cannot allocate source resume metadata.")}}
+            var st=stat();guard fstat(gapFD,&st) == 0,st.st_size == gapBytes else {throw ModelLibraryError.invalid("Source resume metadata changed.")}
+        }
+        func write(_ fd:Int32,_ offset:Int64,_ data:Data) throws {
+            try data.withUnsafeBytes {buffer in
+                var written=0
+                while written < data.count {
+                    let count=pwrite(fd,buffer.baseAddress!.advanced(by:written),data.count-written,offset+Int64(written))
+                    if count < 0 && errno == EINTR {continue}
+                    guard count > 0 else {throw ModelLibraryError.invalid("Model write failed; check free space.")};written += count
+                }
+            }
+        }
         var outputs = [String:Int32](); defer { for fd in outputs.values {close(fd)} }
         for (path,size) in plan.payloadSizes {
             let fd: Int32
@@ -187,6 +232,7 @@ public enum MLXPackConverter {
             guard available >= required else {throw ModelLibraryError.diskSpace(required)}
         }
         func commit() throws {
+            if gapsEnabled {guard fsync(gapFD) == 0 else {throw ModelLibraryError.invalid("Cannot synchronize source resume metadata.")}}
             for fd in outputs.values {guard fsync(fd) == 0 else {throw ModelLibraryError.invalid("Could not synchronize model payload.")}}
             try ParticleFormat.encode(checkpoint).write(to:checkpointURL,options:.atomic)
             let fd = try ParticleIO.openRelative(root:root,path:"install-progress.json");defer{close(fd)}
@@ -213,14 +259,32 @@ public enum MLXPackConverter {
                 // Respect older 4 MiB checkpoints while new transfers use bounded 16 MiB reads.
                 let count = committed ? checkpoint.chunks[committedIndex].bytes : Int(min(Int64(16*1024*1024),file.bytes-offset))
                 guard count > 0,count <= 16*1024*1024,Int64(count) <= file.bytes-offset else {throw ModelLibraryError.invalid("Invalid conversion checkpoint range.")}
-                let data = try await source.read(file.path,range:offset..<(offset+Int64(count)))
+                let data:Data
+                if committed && gapsEnabled {
+                    // Reconstruct the original source chunk from verified local
+                    // payload ranges and saved headers/padding, without network
+                    // or SD-card prefix reads. The original full-file digest
+                    // is still computed and verified below.
+                    var restored=Data(count:count)
+                    try restored.withUnsafeMutableBytes {buffer in
+                        for range in fileRanges where range.offset < offset+Int64(count) && range.offset+range.bytes > offset {
+                            let start=max(range.offset,offset),end=min(range.offset+range.bytes,offset+Int64(count))
+                            try ParticleFileRange(descriptor:outputs[range.file]!,offset:Int(range.destination+start-range.offset),count:Int(end-start)).read(into:buffer.baseAddress!.advanced(by:Int(start-offset)))
+                        }
+                        for gap in gaps[file.path] ?? [] where gap.offset < offset+Int64(count) && gap.offset+gap.bytes > offset {
+                            let start=max(gap.offset,offset),end=min(gap.offset+gap.bytes,offset+Int64(count))
+                            try ParticleFileRange(descriptor:gapFD,offset:Int(gap.stored+start-gap.offset),count:Int(end-start)).read(into:buffer.baseAddress!.advanced(by:Int(start-offset)))
+                        }
+                    }
+                    data=restored
+                } else {data=try await source.read(file.path,range:offset..<(offset+Int64(count)))}
                 guard data.count == count else {throw ModelLibraryError.invalid("Truncated model read.")}
                 let digestChunk = hash(data)
                 if committed {
                     let c = checkpoint.chunks[committedIndex]
                     guard c.source == file.path,c.offset == offset,c.bytes == count,c.sha256 == digestChunk else {throw ModelLibraryError.checksum(file.path)}
                 }
-                for range in fileRanges where range.offset < offset+Int64(count) && range.offset+range.bytes > offset {
+                for range in fileRanges where !(committed && gapsEnabled) && range.offset < offset+Int64(count) && range.offset+range.bytes > offset {
                     let start = max(range.offset,offset),end = min(range.offset+range.bytes,offset+Int64(count))
                     let piece = data.subdata(in:Int(start-offset)..<Int(end-offset)),destination = range.destination+start-range.offset
                     let fd = outputs[range.file]!
@@ -229,14 +293,13 @@ public enum MLXPackConverter {
                         try existing.withUnsafeMutableBytes {try ParticleFileRange(descriptor:fd,offset:Int(destination),count:piece.count).read(into:$0.baseAddress!)}
                         guard existing == piece else {throw ModelLibraryError.checksum(range.file)}
                     } else {
-                        try piece.withUnsafeBytes { buffer in
-                            var written = 0
-                            while written < piece.count {
-                                let n = pwrite(fd,buffer.baseAddress!.advanced(by:written),piece.count-written,destination+Int64(written))
-                                if n < 0 && errno == EINTR {continue}
-                                guard n > 0 else {throw ModelLibraryError.invalid("Model write failed; check free space.")};written += n
-                            }
-                        }
+                        try write(fd,destination,piece)
+                    }
+                }
+                if !committed && gapsEnabled {
+                    for gap in gaps[file.path] ?? [] where gap.offset < offset+Int64(count) && gap.offset+gap.bytes > offset {
+                        let start=max(gap.offset,offset),end=min(gap.offset+gap.bytes,offset+Int64(count))
+                        try write(gapFD,gap.stored+start-gap.offset,data.subdata(in:Int(start-offset)..<Int(end-offset)))
                     }
                 }
                 if !committed {checkpoint.chunks.append(.init(source:file.path,offset:offset,bytes:count,sha256:digestChunk))}
@@ -285,6 +348,7 @@ public enum MLXPackConverter {
         guard parent >= 0 else {throw ModelLibraryError.invalid("Cannot finalize the model installation directory.")};defer{close(parent)}
         guard fsync(parent) == 0 else {throw ModelLibraryError.invalid("Cannot synchronize the published model installation.")}
         try fm.removeItem(at:output.appendingPathComponent("install-progress.json"))
+        if gapsEnabled {try fm.removeItem(at:output.appendingPathComponent(gapsName))}
         guard fsync(root) == 0 else {throw ModelLibraryError.invalid("Cannot synchronize the completed installation.")}
     }
 }

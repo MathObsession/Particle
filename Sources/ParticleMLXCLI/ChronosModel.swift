@@ -64,7 +64,17 @@ struct QuantizedExpert {
     static func upstream(_ x: MLXArray, experts: [Self], indices: MLXArray, bankIndices:[Int]? = nil,totalExperts:Int? = nil) throws -> MLXArray {
         let hidden = experts[0].gate.weight.dim(0),input = x.dim(-1)
         let block = SwitchGLU(inputDims:input,hiddenDims:hidden,numExperts:totalExperts ?? experts.count)
-        quantize(model:block,groupSize:64,bits:3)
+        var modules=[(String,Module)]()
+        for (name,inputDims,outputDims) in [("gate_proj",input,hidden),("up_proj",input,hidden),("down_proj",hidden,input)] {
+            // Preserve upstream projection types and shape metadata without
+            // abandoning unevaluated full-size quantization graphs. Those
+            // retained ~600 small Metal buffers per reference model step.
+            let placeholder=SwitchLinear(inputDims:inputDims,outputDims:outputDims,numExperts:totalExperts ?? experts.count,
+                weight:MLXArray.zeros([1,64],dtype:.bfloat16),bias:nil)
+            let projection=QuantizedSwitchLinear(placeholder,groupSize:64,bits:3)
+            eval(projection.parameters());modules.append((name,projection))
+        }
+        try block.update(modules:.unflattened(modules),verify:.all)
         var weights = [String:MLXArray]()
         for (name,key) in [("gate_proj",\Self.gate),("up_proj",\Self.up),("down_proj",\Self.down)] {
             let projections = experts.map{$0[keyPath:key]}
@@ -78,7 +88,9 @@ struct QuantizedExpert {
             weights[name+".scales"] = bank(projections.map(\.scales))
             weights[name+".biases"] = bank(projections.map(\.biases))
         }
-        try block.update(parameters:.unflattened(weights),verify:.all)
+        // The bounded placeholders intentionally change shape here. Native
+        // tensor dimensions are validated by the pack reader before use.
+        try block.update(parameters:.unflattened(weights),verify:[.allModelKeysSet,.noUnusedKeys])
         return block(x,indices)
     }
 }

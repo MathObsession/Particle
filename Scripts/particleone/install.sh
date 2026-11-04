@@ -2,11 +2,11 @@
 # Particle's public tester installer. Uses only tools included with macOS.
 set -euo pipefail
 
-version='0.3.3'
-build='20261027142620'
-archive='Particle-0.3.3-20261027142620-arm64.zip'
-sha256='8b4a1bda9f024709021ba1978b96b98d7d1240003f65710c008006b6fcf436d6'
-base='https://github.com/MathObsession/Particle/releases/download/v0.3.3'
+version='0.4.0'
+build='20261104130529'
+archive='Particle-0.4.0-20261104130529-arm64.zip'
+sha256='65fbba2de03a46988e4cc2b80b6474a211caf5614b19fa35752a8f4b45ec76c1'
+base='https://github.com/MathObsession/Particle/releases/download/v0.4.0'
 identity='app.particleone.desktop'
 verify_only=false
 case "${1:-}" in
@@ -70,7 +70,7 @@ for candidate in "$target" "$legacy"; do
   fi
 done
 processes="$(/bin/ps -axww -o comm=)"
-if [[ "$processes" == *'/Particle.app/Contents/'* || "$processes" == *'/ParticleOne.app/Contents/'* || "$processes" == *'/ParticleCLI'* ]]; then
+if [[ "$processes" == *'/Particle.app/Contents/'* || "$processes" == *'/ParticleOne.app/Contents/'* || "$processes" == *'/ParticleCLI'* || "$processes" == *'/ParticleMLXCLI'* || "$processes" == *'/ParticleLibraryCLI'* ]]; then
   fail 'Quit Particle and any Particle CLI session, then run this installer again. No process was stopped.'
 fi
 stage="$(/usr/bin/mktemp -d "$apps/.particle-install.XXXXXX")"

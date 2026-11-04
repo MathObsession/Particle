@@ -52,6 +52,11 @@ import ParticleDesktopProtocol
     }
     static func event(_ payload:[String:Any]) {if let data = try? JSONSerialization.data(withJSONObject:payload,options:.sortedKeys){FileHandle.standardOutput.write(data+Data([10]))}}
     static func log(_ text:String) {FileHandle.standardError.write(Data((text+"\n").utf8))}
+    static func sample(logits:MLXArray,using sampler:any LogitSampler) -> Int {
+        // MLX LM's top-k sampler indexes [batch, vocabulary]. Greedy sampling
+        // also accepts a vector, which previously concealed this mismatch.
+        sampler.sample(logits:logits.expandedDimensions(axis:0)).item(Int.self)
+    }
     public static func main() async {
         if CommandLine.arguments.contains("--help") {
             print("ParticleMLXCLI --model <v2.particle> --prompt <text> [--interactive] [--desktop-events] --allow-unqualified-run\n--max-context 32768 --max-new 256 --active-experts 8 --expert-cache-slots 12 --prefill-chunk 128 --reasoning-budget 0\n--expert-execution gathered (upstream math; default) | grouped (experimental; full-logit parity has failed)\nExperimental Qwen3.5 MoE streaming worker. Native eight-expert routing is the reference; reduced counts change the model.");return
@@ -192,7 +197,7 @@ import ParticleDesktopProtocol
                     }
                     for index in 0..<options.maxNew {
                         if cancellation.isCancelled {throw CancellationError()}
-                        let token = autoreleasepool {limiter.mustClose ? closing : sampler.sample(logits:last).item(Int.self)}
+                        let token = autoreleasepool {limiter.mustClose ? closing : sample(logits:last,using:sampler)}
                         if stopIDs.contains(token) {finish = "stop";break}
                         if limiter.exhausted {finish = "reasoning_limit";break}
                         output.append(token);limiter.accept(token)

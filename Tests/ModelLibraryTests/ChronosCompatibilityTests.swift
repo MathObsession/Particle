@@ -40,10 +40,10 @@ import Testing
         }
     }
 
-    @Test func preservesMixedQuantizationWithoutQualifyingRuntime() throws {
+    @Test func preservesMixedQuantizationWithChatOnlyRuntime() throws {
         let report = try inspect(),model = try #require(report.descriptor)
         #expect(report.conversionSupported)
-        #expect(!report.installable)
+        #expect(report.installable)
         #expect(model.quantization.bits == 3)
         #expect(model.quantization.overrides.count == 80)
         #expect(model.quantization.overrides.values.allSatisfy{$0 == 8})
