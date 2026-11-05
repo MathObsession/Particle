@@ -1,0 +1,57 @@
+{
+  "base": "https://particle-local.vercel.app",
+  "results": [
+    {
+      "name": "desktop",
+      "theme": "light",
+      "collapsedHeight": 2794,
+      "systemTheme": true,
+      "legacyThemeIgnored": true,
+      "defaultSarvam": true,
+      "alternativeModels": 13,
+      "copyCommand": true,
+      "overflow": false,
+      "errors": [],
+      "requests": 18
+    },
+    {
+      "name": "dark",
+      "theme": "dark",
+      "collapsedHeight": 2794,
+      "systemTheme": true,
+      "legacyThemeIgnored": true,
+      "defaultSarvam": true,
+      "alternativeModels": 13,
+      "copyCommand": true,
+      "overflow": false,
+      "errors": [],
+      "requests": 16
+    },
+    {
+      "name": "mobile",
+      "theme": "light",
+      "collapsedHeight": 2212,
+      "systemTheme": true,
+      "legacyThemeIgnored": true,
+      "defaultSarvam": true,
+      "alternativeModels": 13,
+      "copyCommand": true,
+      "overflow": false,
+      "errors": [],
+      "requests": 18
+    },
+    {
+      "name": "mobile-dark",
+      "theme": "dark",
+      "collapsedHeight": 2212,
+      "systemTheme": true,
+      "legacyThemeIgnored": true,
+      "defaultSarvam": true,
+      "alternativeModels": 13,
+      "copyCommand": true,
+      "overflow": false,
+      "errors": [],
+      "requests": 16
+    }
+  ]
+}

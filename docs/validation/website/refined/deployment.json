@@ -1,0 +1,18 @@
+{
+  "url": "https://particle-local.vercel.app",
+  "deployment": "dpl_Ft8EtEXyjSsveEdoFj3mgJZqDVWv",
+  "sourceCommit": "a021b39738ce29a5882a1a2a42f65a1179811505",
+  "state": "READY",
+  "publicHTTPStatus": 200,
+  "custom404Status": 404,
+  "appReleaseUnchanged": "0.6.1",
+  "manualThemeControls": false,
+  "systemTheme": "CSS prefers-color-scheme, including live changes and preview selection",
+  "fonts": [
+    "Newsreader",
+    "DM Sans"
+  ],
+  "javascriptBytes": 938,
+  "previousJavascriptBytes": 3191,
+  "notes": "Web-only redesign. Existing model catalog and installer command retained. No app/model benchmarks."
+}
