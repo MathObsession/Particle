@@ -32,50 +32,72 @@
   </header>
   <main id="main">
     <section class="hero wrap" aria-labelledby="hero-title">
-      <h1 id="hero-title">AI that runs on your Mac.</h1>
-      <p>Chat, write and work on code with open models.<br class="desktop-break"> Run them locally, with Particle.</p>
+      <h1 id="hero-title">AI that runs on your Mac</h1>
+      <p>Chat, write and work on code with open models<br class="desktop-break"> running locally in Particle</p>
       <div class="hero-actions">
         <a class="button" href="#install">Download for Mac <span aria-hidden="true">↗</span></a>
         <a class="button button-secondary" href="https://github.com/MathObsession/Particle" target="_blank" rel="noopener noreferrer">View source</a>
       </div>
     </section>
 
-    <section class="product wrap" id="workspace" aria-labelledby="product-title">
+    <section class="product wrap" aria-label="Particle Mac app preview">
       <figure class="app-preview">
         <picture>
           <source media="(prefers-color-scheme: dark)" srcset="/assets/app-dark.webp">
           <img src="/assets/app-light.webp" width="1600" height="1075" alt="Particle's Mac interface, showing a conversation, saved chats and the model selector." fetchpriority="high">
         </picture>
-        <figcaption>The Mac app, shown with an example conversation.</figcaption>
+        <figcaption>The Mac app, shown with an example conversation</figcaption>
       </figure>
-      <div class="product-copy">
-        <h2 id="product-title">Chat and code, locally.</h2>
-        <div class="product-descriptions">
-          <p><strong>Churo Chat</strong> handles conversations, writing and questions. Choose Instant or Thinking. Keep chats and optional memories on your Mac.</p>
-          <p><strong>Particle Code</strong> works in your project folder. Read and edit files, review changes and run commands with the required approvals.</p>
-        </div>
+    </section>
+
+    <section class="capabilities wrap" id="workspace" aria-labelledby="product-title">
+      <h2 id="product-title">Chat and code, locally</h2>
+      <div class="capability-grid">
+        <article>
+          <h3>Churo Chat</h3>
+          <p>Handles conversations, writing and questions. Choose Instant or Thinking. Keep chats and optional memories on your Mac.</p>
+        </article>
+        <article>
+          <h3>Particle Code</h3>
+          <p>Works in your project folder. Read and edit files, review changes and run commands with the required approvals.</p>
+        </article>
       </div>
     </section>
 
     <section class="models wrap" id="models" aria-labelledby="models-title">
       <div class="section-heading">
-        <h2 id="models-title">Choose your model.</h2>
+        <h2 id="models-title">Choose your model</h2>
         <p>Install from the app. Adjust experts and memory settings for each model.</p>
       </div>
-      <a class="default-model" href="https://huggingface.co/MathObsession/sarvam-30b-particle" target="_blank" rel="noopener noreferrer">
-        <div><span class="default-label">Default</span><h3>Sarvam 30B</h3><p>The original model behind Churo Chat and Churo Code.</p></div>
-        <div class="default-meta"><span>Q4_K_M · 19.6 GB</span><span>View model <span aria-hidden="true">↗</span></span></div>
-      </a>
+      <!-- FEATURED_MODELS -->
       <details class="model-library">
-        <summary>Other supported models <span class="count">13</span><span class="disclosure" aria-hidden="true">+</span></summary>
+        <summary>More supported models <span class="count">10</span><span class="disclosure" aria-hidden="true">+</span></summary>
         <div class="model-list"><!-- MODEL_ROWS --></div>
         <p class="model-note">Alternative runtimes are early-access Chat. Fast is a collection label, not a speed guarantee. MiniCPM uses its larger original BF16 checkpoint.</p>
       </details>
     </section>
 
+    <section class="benchmarks wrap" id="benchmarks" aria-labelledby="benchmark-title">
+      <div class="section-heading">
+        <h2 id="benchmark-title">Sarvam on an M2 with 8 GB RAM</h2>
+        <p>Measured with an internal SSD on a plugged-in Mac</p>
+      </div>
+      <dl class="benchmark-stats">
+        <div><dt>Measured decode speed</dt><dd>Up to 4.3 <span>tokens/s</span></dd></div>
+        <div><dt>Peak sampled engine footprint</dt><dd>~1.8 <span>GiB</span></dd></div>
+      </dl>
+      <p class="benchmark-note">Experimental three-expert Sarvam profile, 2K context, short code task. Reduced experts can affect quality; speed varies by workload. Engine footprint excludes system and file-cache memory.</p>
+      <details class="benchmark-details">
+        <summary>Measurement details <span class="disclosure" aria-hidden="true">+</span></summary>
+        <p>Two naturally completed code responses measured 4.198 and 4.298 decode tokens/s, with 347 post-prefill steps each. The combined rate was 4.247 tokens/s. Decode timing includes reasoning and excludes model loading and prompt prefill.</p>
+        <p>The recorded peak sampled engine footprint was 1.79 GiB. A separate mixed-language test was slower and reached its reasoning limit without a final answer. These results do not establish the same speed or memory use for every task, longer context or other models. Six experts remains the native model profile.</p>
+        <a href="/benchmarks.json" target="_blank" rel="noopener noreferrer">Recorded measurements <span aria-hidden="true">↗</span></a>
+      </details>
+    </section>
+
     <section class="installation wrap" id="install" aria-labelledby="install-title">
       <div class="section-heading">
-        <h2 id="install-title">Get Particle.</h2>
+        <h2 id="install-title">Get Particle</h2>
         <p>Paste into Terminal to install or update. No Xcode or Python required.</p>
       </div>
       <div class="install-command">
@@ -89,7 +111,7 @@
       </div>
     </section>
   </main>
-  <footer class="site-footer wrap"><a class="brand" href="/">Particle</a><p>Made in India by Lakshya Prajapati.</p><a href="https://github.com/MathObsession/Particle" target="_blank" rel="noopener noreferrer">GitHub <span aria-hidden="true">↗</span></a></footer>
+  <footer class="site-footer wrap"><a class="brand" href="/">Particle</a><p>Made in India by Lakshya Prajapati</p><a href="https://github.com/MathObsession/Particle" target="_blank" rel="noopener noreferrer">GitHub <span aria-hidden="true">↗</span></a></footer>
   <div class="sr-only" id="announcement" role="status" aria-live="polite"></div>
 </body>
 </html>

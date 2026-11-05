@@ -4,14 +4,22 @@
     "group": "default",
     "capability": "Chat + Code",
     "quantization": "Q4_K_M",
-    "url": "https://huggingface.co/MathObsession/sarvam-30b-particle"
+    "url": "https://huggingface.co/MathObsession/sarvam-30b-particle",
+    "featuredID": "sarvam",
+    "featuredLabel": "Sarvam 30B",
+    "description": "The original model behind Churo Chat and Churo Code",
+    "displayMeta": "Q4_K_M \u00b7 19.6 GB"
   },
   {
     "name": "Qwen3.6-35B-A3B",
     "group": "main",
     "capability": "Chat",
     "quantization": "MLX 4-bit",
-    "url": "https://huggingface.co/mlx-community/Qwen3.6-35B-A3B-4bit"
+    "url": "https://huggingface.co/mlx-community/Qwen3.6-35B-A3B-4bit",
+    "featuredID": "qwen36",
+    "featuredLabel": "Qwen3.6-35B-A3B",
+    "description": "Qwen3.6-35B-A3B, available for early-access Chat",
+    "displayMeta": "MLX 4-bit \u00b7 Chat"
   },
   {
     "name": "Qwen3-Coder-30B-A3B",
@@ -32,7 +40,11 @@
     "group": "main",
     "capability": "Chat",
     "quantization": "MLX 4-bit",
-    "url": "https://huggingface.co/mlx-community/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit"
+    "url": "https://huggingface.co/mlx-community/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit",
+    "featuredID": "nemotron",
+    "featuredLabel": "Nemotron",
+    "description": "NVIDIA Nemotron 3.5 Lightning 30B-A3B, available for early-access Chat",
+    "displayMeta": "MLX 4-bit \u00b7 Chat"
   },
   {
     "name": "Qwen3 Thinking 2507",
@@ -67,7 +79,11 @@
     "group": "main",
     "capability": "Chat",
     "quantization": "MXFP4",
-    "url": "https://huggingface.co/mlx-community/gpt-oss-20b-MXFP4-Q8"
+    "url": "https://huggingface.co/mlx-community/gpt-oss-20b-MXFP4-Q8",
+    "featuredID": "gpt-oss",
+    "featuredLabel": "GPT-OSS-20B",
+    "description": "GPT-OSS-20B in mixed MXFP4 / Q8 precision, available for early-access Chat",
+    "displayMeta": "MXFP4 / Q8 \u00b7 Chat"
   },
   {
     "name": "DeepSeek Coder V2 Lite",

@@ -1,0 +1,47 @@
+{
+  "model": "Sarvam 30B Q4_K_M",
+  "hardware": {
+    "chip": "Apple M2",
+    "unifiedMemoryGiB": 8,
+    "power": "AC"
+  },
+  "date": "2026-10-25",
+  "profile": {
+    "activeExperts": 3,
+    "approximateExecution": true,
+    "contextLimitTokens": 2048,
+    "expertSlotsPerLayer": 12,
+    "ssdReadWorkers": 2,
+    "expertStorage": "Verified internal SSD mirror",
+    "kvPrecision": "FP32"
+  },
+  "workload": "Same short Python is_even request, two natural completions, KV cleared between turns",
+  "turns": [
+    {
+      "decodeSteps": 347,
+      "decodeSeconds": 82.66584837499977,
+      "tokensPerSecond": 4.197622196120127,
+      "outputTokens": 348,
+      "finish": "stop",
+      "peakSampledEngineFootprintBytes": 1915750632
+    },
+    {
+      "decodeSteps": 347,
+      "decodeSeconds": 80.73468374999356,
+      "tokensPerSecond": 4.298028850580933,
+      "outputTokens": 348,
+      "finish": "stop",
+      "peakSampledEngineFootprintBytes": 1922091264
+    }
+  ],
+  "weightedDecodeTokensPerSecond": 4.247232190585061,
+  "qualifiedAcrossWorkloads": false,
+  "limitations": [
+    "Experimental reduced-expert execution can change answer quality",
+    "Decode includes reasoning and excludes prefill and startup",
+    "Sampled engine footprint excludes total system and file-cache memory",
+    "Not a benchmark for Nemotron, GPT-OSS, Qwen or other models",
+    "Separate mixed-language completions were slower and ended during reasoning"
+  ],
+  "sourceDocument": "https://github.com/MathObsession/Particle/blob/main/docs/PARTICLE_SPEED_QUALITY.md"
+}

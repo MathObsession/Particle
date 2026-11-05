@@ -1,0 +1,54 @@
+{
+  "base": "http://127.0.0.1:4175",
+  "results": [
+    {
+      "name": "desktop",
+      "systemTheme": true,
+      "separateChatCodeSection": true,
+      "featuredModels": 4,
+      "otherModels": 10,
+      "modelKeyboardNavigation": true,
+      "benchmarkMatchesMeasurements": true,
+      "copyCommand": true,
+      "overflow": false,
+      "errors": []
+    },
+    {
+      "name": "dark",
+      "systemTheme": true,
+      "separateChatCodeSection": true,
+      "featuredModels": 4,
+      "otherModels": 10,
+      "modelKeyboardNavigation": true,
+      "benchmarkMatchesMeasurements": true,
+      "copyCommand": true,
+      "overflow": false,
+      "errors": []
+    },
+    {
+      "name": "mobile",
+      "systemTheme": true,
+      "separateChatCodeSection": true,
+      "featuredModels": 4,
+      "otherModels": 10,
+      "modelKeyboardNavigation": true,
+      "benchmarkMatchesMeasurements": true,
+      "copyCommand": true,
+      "overflow": false,
+      "errors": []
+    },
+    {
+      "name": "mobile-dark",
+      "systemTheme": true,
+      "separateChatCodeSection": true,
+      "featuredModels": 4,
+      "otherModels": 10,
+      "modelKeyboardNavigation": true,
+      "benchmarkMatchesMeasurements": true,
+      "copyCommand": true,
+      "overflow": false,
+      "errors": []
+    }
+  ],
+  "noJavaScriptModelsReadable": true
+}
