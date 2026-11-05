@@ -4,6 +4,7 @@ import ParticleModelLibrary
 extension WorkspaceModel {
     func beginNativeLibraryInstall(_ listing: LibraryListing) {
         guard listing.report.installable,let card = listing.card,nativeLibraryProcess == nil,nativeLibraryTask == nil,!installer.running else {return}
+        if let issue=ModelRuntimeProfile.memoryIssue(listing.descriptor) {library.message=issue;return}
         let destination = library.managedRoot.appendingPathComponent(listing.id+".particle")
         guard let id = library.beginJob(repository:card.repository,revision:card.revision,destination:destination,total:listing.descriptor.sourceBytes) else {return}
         launchNativeInstall(descriptor:listing.descriptor,jobID:id,destination:destination)
@@ -40,6 +41,7 @@ extension WorkspaceModel {
                 let report=try await Task.detached{try ArchitectureRegistry.inspectLocal(source)}.value
                 try Task.checkCancellation()
                 guard report.installable,let descriptor=report.descriptor else {throw ModelLibraryError.incompatible(report.reason)}
+                guard ModelCatalog.allows(descriptor) else {throw ModelLibraryError.incompatible(ModelCatalog.outsideCatalog)}
                 if job == nil,let existing=library.installed.first(where:{$0.id == descriptor.id}),Self.modelExists(existing.path) {
                     library.message="This model is already in Installed. Select Use model to begin.";return
                 }

@@ -9,7 +9,9 @@ import ParticleModelLibrary
 /// registry. There is no model-name or architecture switch in this compiler.
 @MainActor enum AutomaticGraphCompiler {
     static func configuration(_ data:Data,experts:Int? = nil,fields:[String] = []) throws -> (String,Data,[String:Any]) {
-        guard data.count <= 1_048_576,var root=try JSONSerialization.jsonObject(with:data) as? [String:Any],let type=root["model_type"] as? String else {throw ModelLibraryError.invalid("Missing graph model_type.")}
+        guard data.count <= 1_048_576,var root=try JSONSerialization.jsonObject(with:data) as? [String:Any] else {throw ModelLibraryError.invalid("Missing graph model_type.")}
+        if root["model_type"] == nil,ModelCatalog.entry(configuration:data,repository:nil)?.id == "minicpm" {root["model_type"]="minicpm"}
+        guard let type=root["model_type"] as? String else {throw ModelLibraryError.invalid("Missing graph model_type.")}
         func scan(_ object:[String:Any],depth:Int=0) throws {
             guard depth <= 12 else {throw ModelLibraryError.invalid("Graph configuration nesting is excessive.")}
             for (key,value) in object {
@@ -23,6 +25,14 @@ import ParticleModelLibrary
                 }
             }
             if let heads=object["num_attention_heads"] as? Int,let kv=object["num_key_value_heads"] as? Int, !heads.isMultiple(of:kv) {throw ModelLibraryError.invalid("Query heads must be divisible by KV heads.")}
+        }
+        // These native bundled ports do not need the repository's auto_map.
+        // Discarding that executable-code pointer never executes its contents.
+        if ["deepseek","deepseek_v2","minicpm"].contains(type) {root["auto_map"]=nil}
+        if type == "nemotron_h",root["hybrid_override_pattern"] == nil,let blocks=root["layers_block_type"] as? [String] {
+            let codes=["mamba":"M","linear_attention":"M","attention":"*","full_attention":"*","moe":"E","mlp":"-"]
+            guard blocks.allSatisfy({codes[$0] != nil}),blocks.count == root["num_hidden_layers"] as? Int else {throw ModelLibraryError.invalid("Invalid Nemotron block schedule.")}
+            root["hybrid_override_pattern"]=blocks.map{codes[$0]!}.joined()
         }
         try scan(root)
         if let experts {
@@ -38,13 +48,13 @@ import ParticleModelLibrary
     static func compile(_ request:ParticleGraphRequest) async throws -> ParticleGraphPlan {
         guard !request.tensors.isEmpty,request.tensors.count <= 100_000,Set(request.tensors.map(\.name)).count == request.tensors.count else {throw ModelLibraryError.invalid("Invalid graph tensor inventory.")}
         let (type,config,root)=try configuration(request.configuration)
-        guard await LLMTypeRegistry.shared.contains(type) else {throw ModelLibraryError.incompatible("The bundled graph backend has no implementation for \(type). A portable graph/operator extension is required; no model weights were downloaded.")}
-        let model=try await LLMTypeRegistry.shared.createModel(configuration:config,modelType:type)
+        guard await ParticleGraphFactory.contains(type) else {throw ModelLibraryError.incompatible("The bundled graph backend has no implementation for \(type). A portable graph/operator extension is required; no model weights were downloaded.")}
+        let model=try await ParticleGraphFactory.create(config,type:type)
         let modules=Dictionary(uniqueKeysWithValues:model.namedModules())
         let parameters=Dictionary(uniqueKeysWithValues:model.parameters().flattened())
         let normalization=try SourceTensorNormalizer.normalize(model:model,records:request.tensors)
         let sources=normalization.tensors
-        let base=try JSONDecoder().decode(BaseConfiguration.self,from:request.configuration)
+        let base=try JSONDecoder().decode(BaseConfiguration.self,from:config)
         let expertModules=modules.filter{$0.value is SwitchLinear && ($0.value.parameters().flattened().first(where:{$0.0 == "weight"})?.1.shape.first ?? 0) > 1}.sorted{$0.key < $1.key}
         guard !expertModules.isEmpty else {throw ModelLibraryError.incompatible("This graph exposes no supported expert matrix operations. Dense models or custom expert operators cannot use this streaming pass.")}
         let parents=Array(Set(expertModules.map{String($0.key.split(separator:".").dropLast().joined(separator:"."))})).sorted()
@@ -75,7 +85,7 @@ import ParticleModelLibrary
                 claimed.insert(name)
             }
         }
-        guard claimed == Set(sources.keys) else {throw ModelLibraryError.incompatible("Checkpoint has tensors outside the compiled graph: \(Set(sources.keys).subtracting(claimed).sorted().prefix(3).joined(separator:", ")). No tensors were silently discarded.")}
+        guard claimed == Set(sources.keys).subtracting(normalization.archived) else {throw ModelLibraryError.incompatible("Checkpoint has tensors outside the compiled graph: \(Set(sources.keys).subtracting(claimed).sorted().prefix(3).joined(separator:", ")). No tensors were silently discarded.")}
         for (path,module) in expertModules {
             guard let weight=parameters[path+".weight"],weight.ndim == 3 else {throw ModelLibraryError.incompatible("An expert projection is not a rank-three bank: \(path).")}
             let parent=path.split(separator:".").dropLast().joined(separator:".")
@@ -88,7 +98,7 @@ import ParticleModelLibrary
         func findRouting(_ object:[String:Any],prefix:String="") {
             for (key,value) in object {
                 if let nested=value as? [String:Any],key != "quantization",key != "quantization_config" {findRouting(nested,prefix:prefix+key+".")}
-                if ["num_experts_per_tok","num_experts_per_token","experts_per_token","moe_top_k","moe_topk"].contains(key),let count=value as? Int,(1...64).contains(count) {routing[prefix+key]=count}
+                if ["num_experts_per_tok","num_experts_per_token","experts_per_token","moe_top_k","moe_topk","top_k_experts"].contains(key),let count=value as? Int,(1...64).contains(count) {routing[prefix+key]=count}
             }
         }
         findRouting(root)
@@ -108,9 +118,10 @@ import ParticleModelLibrary
             for name in names {let record=sources[name]!;let count=Int64(projections.first(where:{$0.bank == bank})!.experts);offset=(offset+255)/256*256+record.bytes/count}
             expertBytes += (offset+16383)/16384*16384
         }
-        let resident=sources.values.filter{!routed.contains($0.name)}.reduce(Int64(0)){$0+$1.bytes}
-        let plan=ParticleGraphPlan(modelType:type,configurationSHA256:ParticleGraphPlan.digest(request.configuration),tensorsSHA256:try ParticleGraphPlan.tensorDigest(Array(sources.values)),projections:projections,routingFields:routing.keys.sorted(),nativeExperts:native,hiddenLayers:layers,
+        let resident=sources.values.filter{!routed.contains($0.name) && !normalization.archived.contains($0.name)}.reduce(Int64(0)){$0+$1.bytes}
+        var plan=ParticleGraphPlan(modelType:type,configurationSHA256:ParticleGraphPlan.digest(request.configuration),tensorsSHA256:try ParticleGraphPlan.tensorDigest(Array(sources.values)),projections:projections,routingFields:routing.keys.sorted(),nativeExperts:native,hiddenLayers:layers,
             contextLimit:min(262144,max(4096,text["max_position_embeddings"] as? Int ?? 32768)),kvBytesPerToken:Int64(full)*Int64(kvHeads)*Int64(headDim)*8,cacheTypes:cache.map{String(describing:Swift.type(of:$0))},expertBytesPerSlot:expertBytes,residentBytes:resident,sourceTensorsSHA256:try ParticleGraphPlan.tensorDigest(request.tensors),assemblies:normalization.assemblies)
+        plan.archivedTensors=normalization.archived.isEmpty ? nil : normalization.archived
         try plan.validate();return plan
     }
 }

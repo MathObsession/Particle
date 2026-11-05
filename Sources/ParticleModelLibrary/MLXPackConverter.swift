@@ -42,9 +42,14 @@ public enum MLXPackConverter {
     }
     public static func plan(source: any ModelByteSource, provenance: ModelProvenance = .init(),preferGraph:Bool=false) async throws -> MLXPackPlan {
         let config = try await metadata(source,path:"config.json",limit:1_048_576)
+        if let repo=provenance.repository,ModelCatalog.entry(repository:repo) != nil,ModelCatalog.entry(configuration:config,repository:repo) == nil {throw ModelLibraryError.incompatible("The source configuration does not match its curated model identity.")}
         if let reason=try ArchitectureRegistry.configurationIncompatibility(config) {throw ModelLibraryError.incompatible(reason)}
         let map:[String:String]
-        if source.files.contains(where:{$0.path == "model.safetensors.index.json"}) {
+        var archiveRecords:[String:SafetensorRecord]?
+        if let archive=source.files.first(where:{$0.path == "pytorch_model.bin"}),!source.files.contains(where:{$0.path.hasSuffix(".safetensors")}) {
+            archiveRecords=try await TorchTensorArchive.records(source:source,file:archive)
+            map=Dictionary(uniqueKeysWithValues:archiveRecords!.keys.map{($0,archive.path)})
+        } else if source.files.contains(where:{$0.path == "model.safetensors.index.json"}) {
             let index=try await metadata(source,path:"model.safetensors.index.json",limit:16*1024*1024)
             guard let object=try JSONSerialization.jsonObject(with:index) as? [String:Any],let value=object["weight_map"] as? [String:String],!value.isEmpty,value.count <= 100_000,Set(value.values).count <= 128 else {throw ModelLibraryError.invalid("Invalid checkpoint shard index.")}
             map=value
@@ -61,8 +66,9 @@ public enum MLXPackConverter {
         var records = [String:SafetensorRecord](); var shardFiles = [HubFile]()
         for path in Set(map.values).sorted() {
             try ParticleFormat.validatePath(path)
-            guard let file = source.files.first(where: {$0.path == path}), file.bytes > 8, path.hasSuffix(".safetensors") else { throw ModelLibraryError.invalid("Missing safetensors shard.") }
+            guard let file = source.files.first(where: {$0.path == path}), file.bytes > 8, path.hasSuffix(".safetensors") || (path == "pytorch_model.bin" && archiveRecords != nil) else { throw ModelLibraryError.invalid("Missing safetensors shard.") }
             if provenance.repository != nil,file.sha256 == nil {throw ModelLibraryError.invalid("The remote shard has no source checksum.")}
+            if let archiveRecords {for (name,record) in archiveRecords {records[name]=record};shardFiles.append(file);continue}
             let prefix = try await source.read(path,range:0..<8)
             let n = prefix.enumerated().reduce(UInt64(0)) { $0 | UInt64($1.element) << (8*$1.offset) }
             guard n > 1, n <= SafetensorsHeader.maximumHeaderBytes, n <= UInt64(file.bytes-8) else { throw ModelLibraryError.invalid("Invalid safetensors header size.") }
@@ -83,7 +89,8 @@ public enum MLXPackConverter {
         if source.files.contains(where:{$0.path == "chat_template.jinja"}) {template=try await metadata(source,path:"chat_template.jinja",limit:262_144)}
         else {
             let data=try await metadata(source,path:"tokenizer_config.json",limit:1_048_576)
-            guard let config=try JSONSerialization.jsonObject(with:data) as? [String:Any],let text=config["chat_template"] as? String,!text.isEmpty,text.utf8.count <= 262_144 else {throw ModelLibraryError.incompatible("No supported chat template was found in the checkpoint.")}
+            let fallback=ModelCatalog.fallbackTemplate(configuration:config,repository:provenance.repository)
+            guard let configuration=try JSONSerialization.jsonObject(with:data) as? [String:Any],let text=(configuration["chat_template"] as? String) ?? fallback,!text.isEmpty,text.utf8.count <= 262_144 else {throw ModelLibraryError.incompatible("No supported chat template was found in the checkpoint.")}
             template=Data(text.utf8);generated["tokenizer/chat_template.jinja"]=template
         }
         try await ArchitectureRegistry.validateGraphTokenizer(tokenizer:metadata(source,path:"tokenizer.json",limit:64*1024*1024),configuration:metadata(source,path:"tokenizer_config.json",limit:1_048_576))
@@ -111,10 +118,11 @@ public enum MLXPackConverter {
             guard copied == count else {throw ModelLibraryError.invalid("Normalization does not cover its destination bytes.")}
         }
         for record in records.values.sorted(by: {$0.name < $1.name}) where routedLayer(record.name) == nil {
-            let offset = try align(sizes["common.bin"]!)
-            sizes["common.bin"] = offset+record.bytes
-            tensors.append(.init(name:record.name,dtype:record.dtype,shape:record.shape,file:"common.bin",offset:offset,bytes:record.bytes))
-            try appendCopies(record,start:0,count:record.bytes,file:"common.bin",destination:offset)
+            let file=(model.graph?.archivedTensors ?? []).contains(record.name) ? "source-only.bin" : "common.bin"
+            let offset = try align(sizes[file,default:0])
+            sizes[file] = offset+record.bytes
+            tensors.append(.init(name:record.name,dtype:record.dtype,shape:record.shape,file:file,offset:offset,bytes:record.bytes))
+            try appendCopies(record,start:0,count:record.bytes,file:file,destination:offset)
         }
         for layer in model.graph?.banks.keys.sorted() ?? Array(0..<model.layers) {
             let group = records.values.filter { routedLayer($0.name) == layer }.sorted { $0.name < $1.name }

@@ -99,3 +99,32 @@ Release build `20261104161646`; archive SHA-256 `b152adf62d75068bfa4314d2837239d
 The packaged compiler and a tiny sampled chat passed with developer paths
 removed. Six focused channel-framing checks and the SwiftUI source/probe
 guards passed. No full model weights were downloaded for these checks.
+
+## 0.6.0: curated collection, 5 November 2026
+
+The product catalog now contains exactly ten main entries and three Fast entries.
+Open-ended discovery/admission has been removed. Sarvam, Chronos, Mixtral and
+other old entries retain their model files and conversations but are no longer
+offered/selectable. Startup opens the curated library instead of downloading Sarvam.
+
+All thirteen preferred real checkpoints passed configuration, tensor/archive,
+tokenizer/template and runtime-graph metadata inspection without downloading
+full pretrained weights. Added native Qwen2-MoE, DeepSeek-MoE and MiniCPM-MoE
+graphs, Nemotron block-list normalization, tied MiniCPM output embeddings and
+original w1/w2/w3 expert mappings. Preserved unused tensors in a separate
+checksummed archive and fixed sparse module-array replacement across dense layers.
+
+Three tiny original PyTorch checkpoints converted with 87 exact tensor checks,
+preserved source-only bytes and zero full-logit/continuation differences over
+two-step alternating streamed/reference execution. A real tiny torch.save
+archive matched exact BF16/F32 bytes; executable pickle was rejected without
+execution. Eleven focused catalog boundary assertions and SwiftUI source/probe
+guards passed. No long benchmark matrix or trained-model quality/speed claim
+is made. MiniCPM remains native BF16 with larger memory/disk requirements.
+
+Evidence: `curated-0.6.0/catalog-metadata-checks.json` and
+`curated-0.6.0/fast-checks.json`.
+
+Packaged compiler/PyTorch inspection and Metal reference checks passed without
+developer paths. The thirteen-model cached library rendered successfully.
+Release build `20261105145326`; archive SHA-256 `01d891fc00d43fd7eb3f5d31230ab11118984b547d9dbea7be9db4ab79a90c29`.

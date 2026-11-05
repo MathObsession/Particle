@@ -228,6 +228,7 @@ import ParticleDesktopProtocol
                     var byteDecoder = ChronosByteDecoder()
                     var forcedFrameTokens=[Int](),frameTransitions=0
                     var framer=descriptor.graph == nil ? nil : GraphResponseFramer(controls:frameControls,prompt:ids,decode:{tokenizer.decode(tokens:$0)})
+                    var thought=descriptor.graph == nil ? nil : GraphThoughtFramer(opening:tokenizer.convertTokenToId("<|channel>"),closing:tokenizer.convertTokenToId("<channel|>"),prompt:ids)
                     let sampler = GenerateParameters(temperature:options.temperature,topP:0.95,topK:20).sampler()
                     var limiter = DesktopReasoningLimiter(budget:options.budget,openingToken:opening,closingToken:closing)
                     if thinkingInPrompt {limiter.accept(opening)}
@@ -242,12 +243,15 @@ import ParticleDesktopProtocol
                             guard frameTransitions <= 2 else {throw ModelLibraryError.invalid("The model repeatedly restarted private reasoning and was stopped.")}
                             forcedFrameTokens=frame.finalHeader(encode:{tokenizer.encode(text:$0,addSpecialTokens:false)})
                         }
+                        if forcedFrameTokens.isEmpty,let frame=thought,options.budget>=0,frame.hidden,frame.analysisTokens>=options.budget {
+                            frameTransitions+=1;guard frameTransitions<=2 else {throw ModelLibraryError.invalid("The model repeatedly restarted private reasoning and was stopped.")};forcedFrameTokens=[frame.closing]
+                        }
                         let token = autoreleasepool {!forcedFrameTokens.isEmpty ? forcedFrameTokens.removeFirst() : limiter.mustClose ? closing : sample(logits:last,using:sampler)}
                         if stopIDs.contains(token) {finish = "stop";break}
                         if limiter.exhausted {finish = "reasoning_limit";break}
                         output.append(token);limiter.accept(token)
                         if descriptor.graph != nil {
-                            let decoded=leadingPrefix+(framer?.append(token,decode:{tokenizer.decode(tokens:$0)}) ?? tokenizer.decode(tokens:output))
+                            let decoded=leadingPrefix+(framer?.append(token,decode:{tokenizer.decode(tokens:$0)}) ?? thought?.append(token,decode:{tokenizer.decode(tokens:$0)}) ?? tokenizer.decode(tokens:output))
                             guard decoded.utf8.starts(with:emitted.utf8) else {throw ModelLibraryError.incompatible("The tokenizer rewrote an emitted prefix; this decoder needs a dedicated incremental implementation.")}
                             let stable=String(String.UnicodeScalarView(decoded.unicodeScalars.dropLast(16)))
                             if stable.utf8.count > emitted.utf8.count {
@@ -266,16 +270,16 @@ import ParticleDesktopProtocol
                         if index+1 < options.maxNew {last = try model.evaluate([token]);steps += 1}
                     }
                     if descriptor.graph != nil {
-                        let decoded=leadingPrefix+(framer?.text(decode:{tokenizer.decode(tokens:$0)}) ?? tokenizer.decode(tokens:output))
+                        let decoded=leadingPrefix+(framer?.text(decode:{tokenizer.decode(tokens:$0)}) ?? thought?.text(decode:{tokenizer.decode(tokens:$0)}) ?? tokenizer.decode(tokens:output))
                         guard decoded.utf8.starts(with:emitted.utf8) else {throw ModelLibraryError.incompatible("The tokenizer changed its committed stream.")}
                         if decoded.hasSuffix("\u{fffd}") {throw ModelLibraryError.invalid("Output stopped inside an unfinished tokenizer byte sequence.")}
                         let suffix=try ChronosByteDecoder.suffix(decoded,emittedBytes:emitted.utf8.count);emitted=decoded
                         if options.desktop {event(["event":"text","text":suffix])}else{FileHandle.standardOutput.write(Data(suffix.utf8))}
                     }
-                    if framer != nil,emitted.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty {throw ModelLibraryError.invalid("The model reached its output allowance before producing a public reply. Your conversation was retained.")}
+                    if (framer != nil || thought != nil),emitted.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty {throw ModelLibraryError.invalid("The model reached its output allowance before producing a public reply. Your conversation was retained.")}
                     let finished = ProcessInfo.processInfo.systemUptime
                     if String(data:byteDecoder.bytes,encoding:.utf8) == nil {finish = "unicode_boundary";messages = previousMessages;try model.reset()}
-                    else if framer == nil && !(leadingPrefix+tokenizer.decode(tokens:output)).utf8.elementsEqual(emitted.utf8) {throw ModelLibraryError.incompatible("The tokenizer decoder does not match the qualified byte-level contract.")}
+                    else if framer == nil && thought == nil && !(leadingPrefix+tokenizer.decode(tokens:output)).utf8.elementsEqual(emitted.utf8) {throw ModelLibraryError.incompatible("The tokenizer decoder does not match the qualified byte-level contract.")}
                     else if finish == "reasoning_limit" {messages = previousMessages;try model.reset()}
                     else {messages.append(["role":"assistant","content":emitted])}
                     if options.desktop {event(["event":"turn","text":emitted,"tokens":output.count,"decode_steps":steps,"decode_seconds":finished-prefilled,

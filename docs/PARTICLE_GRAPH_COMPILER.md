@@ -1,6 +1,9 @@
+> Product scope changed in 0.6.0: the compiler remains internal, but only the
+> [curated model collection](MODEL_LIBRARY.md) can be installed or selected.
+
 # Automatic MoE graph compiler
 
-Particle 0.5.0 adds operation-level adaptation across the trusted bundled MLX backend. It no longer needs a Particle-specific family recipe for every compatible MoE graph. Sarvam remains the default Churo experience, and existing v1/v2 installations remain supported.
+Particle 0.5.0 introduced operation-level adaptation across the trusted bundled MLX backend. It no longer needs a Particle-specific family recipe for every compatible MoE graph. Sarvam remains the default Churo experience, and existing v1/v2 installations remain supported.
 
 ## How adaptation works
 

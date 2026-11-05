@@ -112,20 +112,19 @@ final class DesktopPipeReader: @unchecked Sendable {
     }
     func inspectModel() {
         guard !preview else { return }
-        if settings.modelID != ModelDescriptor.sarvam.id {
-            guard Self.modelExists(settings.modelPath),library.installed.contains(where:{$0.id==settings.modelID && $0.path==settings.modelPath}) else {notice="This conversation’s model is unavailable. Reinstall or re-import it from Models; your transcript is preserved.";showModelLibrary=true;return}
-            return
-        }
-        let candidates=[settings.modelPath,WorkspacePersistence.defaultDirectory.appendingPathComponent("Models/churo-chat.particle").path,directory.appendingPathComponent("Models/sarvam-30b-q4_k_m.particle").path,"/Volumes/Particle/Models/sarvam-30b/sarvam-30b-q4_k_m.particle"]
-        if let path=candidates.first(where:Self.modelExists) { state.settings.modelPath=path;library.rememberExistingSarvam(path,settings:settings);persist() }
-        else { showSetup=true;beginInstall() }
+        if let installed=library.installed.first(where:{$0.id == settings.modelID && $0.path == settings.modelPath}),ModelCatalog.allows(installed.descriptor),Self.modelExists(installed.path) {return}
+        // Keep every old transcript/model, but never automatically download a
+        // model outside the newly requested collection on first launch.
+        showModelLibrary=true
     }
+
     static func modelExists(_ path: String) -> Bool {
         let root=URL(fileURLWithPath:path)
         if path.hasSuffix(".particle") { return FileManager.default.fileExists(atPath:root.appendingPathComponent("verified-install.json").path) && FileManager.default.fileExists(atPath:root.appendingPathComponent("manifest.json").path) }
         return path.lowercased().hasSuffix(".gguf") && FileManager.default.fileExists(atPath:path)
     }
     func beginInstall(root: URL? = nil, selectWhenComplete: Bool = true) {
+        guard ModelCatalog.allows(.sarvam) else {notice=ModelCatalog.outsideCatalog;showSetup=false;showModelLibrary=true;return}
         guard !preview,!modelInstallationActive else { return }
         let destination=root ?? library.managedRoot
         if libraryInstallJob == nil {libraryInstallJob=library.beginDefaultJob(destination:destination)}
@@ -263,6 +262,7 @@ final class DesktopPipeReader: @unchecked Sendable {
     func loadModel() {
         guard conversationUsesCurrentModel else {notice="This conversation’s model is unavailable. Its transcript remains readable; reinstall its model in Models to continue.";showModelLibrary=true;return}
         guard !loading,!connected,worker==nil,!preview,!library.converting else{return}
+        guard ModelCatalog.allows(selectedModelDescriptor) else {notice=ModelCatalog.outsideCatalog;showModelLibrary=true;return}
         guard settings.isValid(for:selectedModelDescriptor) else{notice="These model settings exceed this model’s supported memory or context profile. Choose a smaller capacity in Settings; your saved messages are retained.";return}
         guard settings.modelID == ModelDescriptor.sarvam.id || library.installed.contains(where:{$0.path==settings.modelPath}) else{notice="The selected model’s library record is unavailable. Re-import it to restore its runtime information. Existing chats and files are preserved.";return}
         guard Self.modelExists(settings.modelPath) else {if settings.modelID == ModelDescriptor.sarvam.id{showSetup=true}else{showModelLibrary=true;notice="The selected model’s files are unavailable. Reinstall or re-import it to continue."};return }

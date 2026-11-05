@@ -41,7 +41,7 @@ extension ChronosModel:ParticleStreamedModel {}
         let headers=reader.manifest.tensors.map{t in SafetensorRecord(name:t.name,dtype:t.dtype,shape:t.shape,offset:0,bytes:t.bytes*Int64(t.layer.flatMap{plan.banks[$0]} ?? 1))}
         guard plan.tensorsSHA256 == (try ParticleGraphPlan.tensorDigest(headers)) else {throw ModelLibraryError.checksum("Graph tensor inventory")}
         let strides=Dictionary(grouping:reader.manifest.tensors.filter{$0.layer != nil},by:{$0.layer!}).values.compactMap{$0.first?.expertStride}
-        let common=reader.manifest.tensors.filter{$0.layer == nil}.reduce(Int64(0)){$0+$1.bytes}
+        let common=reader.manifest.tensors.filter{$0.layer == nil && !(plan.archivedTensors ?? []).contains($0.name)}.reduce(Int64(0)){$0+$1.bytes}
         let memory=Int64(ProcessInfo.processInfo.physicalMemory)
         guard common+Dictionary(grouping:reader.manifest.tensors.filter{$0.layer != nil},by:{$0.layer!}).reduce(Int64(0)){sum,pair in sum+(pair.value.first?.expertStride ?? 0)*Int64(min(slots,plan.banks[pair.key] ?? slots))}+512*1024*1024 < memory*3/4 else {throw ModelLibraryError.incompatible("Resident graph weights and expert slots exceed this Mac's memory allowance. Choose fewer slots or a smaller model.")}
         let maximum=strides.max() ?? 1,budget=min(Int64(2_147_483_648),memory/4),capacity=Int(budget/(2*maximum))
@@ -49,9 +49,9 @@ extension ChronosModel:ParticleStreamedModel {}
         if capacity < (plan.banks.values.max() ?? 0) {rowLimit=max(1,min(128,capacity/activeExperts))}
         try reader.verifyResidentFiles()
         let (type,runtime,_)=try AutomaticGraphCompiler.configuration(config,experts:activeExperts,fields:plan.routingFields)
-        guard type == plan.modelType,await LLMTypeRegistry.shared.contains(type) else {throw ModelLibraryError.incompatible("The graph backend is unavailable in this engine version.")}
+        guard type == plan.modelType,await ParticleGraphFactory.contains(type) else {throw ModelLibraryError.incompatible("The graph backend is unavailable in this engine version.")}
         MLX.compile(enable:false)
-        model=try await LLMTypeRegistry.shared.createModel(configuration:runtime,modelType:type)
+        model=try await ParticleGraphFactory.create(runtime,type:type)
         let boundedReaders=min(readWorkers,max(1,Int(min(memory/16,Int64(512*1024*1024))/maximum)))
         store=GraphExpertStore(reader:reader,slots:slots,readWorkers:boundedReaders);store.cancellation={cancellation?.isCancelled ?? false}
         let modules=Dictionary(uniqueKeysWithValues:model.namedModules())
@@ -61,11 +61,24 @@ extension ChronosModel:ParticleStreamedModel {}
                   weight.shape == [projection.experts,projection.output,projection.input] else {throw ModelLibraryError.invalid("The compiled projection differs from the bundled backend graph.")}
             replacements.append((projection.path,PagedGraphLinear(store:store,projection:projection)))
         }
-        try model.update(modules:.unflattened(replacements),verify:.none)
+        // MLX recurses into module arrays only when every visited slot is a
+        // dictionary. Preserve untouched dense layers as empty updates instead
+        // of .none holes, without trying to replace immutable norm modules.
+        func filled(_ item:NestedItem<String,Module>)->NestedItem<String,Module> {
+            switch item {
+            case .dictionary(let values):return .dictionary(values.mapValues(filled))
+            case .array(let values):
+                let recursive=values.contains{if case .dictionary=$0 {return true};return false}
+                return .array(values.map{value in if recursive,case .none=value {return .dictionary([:])};return filled(value)})
+            default:return item
+            }
+        }
+        let update:ModuleChildren = .unflattened(replacements)
+        try model.update(modules:ModuleChildren(values:Dictionary(uniqueKeysWithValues:update.keys.map{($0,filled(update[$0]!))})),verify:.none)
         var weights=[String:MLXArray]()
-        for tensor in reader.manifest.tensors where tensor.layer == nil {let (_,data)=try reader.residentTensor(tensor.name);weights[tensor.name]=MLXArray(data,tensor.shape,dtype:try ExpertStore.dtype(tensor.dtype))}
+        for tensor in reader.manifest.tensors where tensor.layer == nil && !(plan.archivedTensors ?? []).contains(tensor.name) {let (_,data)=try reader.residentTensor(tensor.name);weights[tensor.name]=MLXArray(data,tensor.shape,dtype:try ExpertStore.dtype(tensor.dtype))}
         weights=model.sanitize(weights:weights)
-        let base=try JSONDecoder().decode(BaseConfiguration.self,from:config)
+        let base=try JSONDecoder().decode(BaseConfiguration.self,from:runtime)
         quantize(model:model,filter:{name,_ -> (groupSize:Int,bits:Int,mode:QuantizationMode)? in
             guard weights[name+".scales"] != nil else{return nil}
             return (base.perLayerQuantization?.quantization(layer:name) ?? (base.perLayerQuantization == nil ? base.quantization : nil))?.asTuple

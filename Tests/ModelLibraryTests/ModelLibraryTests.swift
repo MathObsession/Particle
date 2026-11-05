@@ -50,7 +50,7 @@ import ParticleOneCore
             provenance:.init(repository:ModelRecommendations.chronosRepository),quantization:.init(scheme:"affine",bits:3),
             layers:40,experts:256,activeExperts:8,contextLimit:262144,sourceBytes:15_000_000_000,kvBytesPerToken:40960,supportsTools:false)
         #expect(ModelRecommendations.reason(for:pending) != nil)
-        #expect(ModelRecommendations.eligible([pending,.sarvam]) == [.sarvam,pending])
+        #expect(ModelRecommendations.eligible([pending,.sarvam]).isEmpty)
         #expect(ModelRecommendations.reason(for:.sarvam)?.contains("Start here") == true)
     }
     @Test func validatesSafetensorsBoundsAndTypes() throws {

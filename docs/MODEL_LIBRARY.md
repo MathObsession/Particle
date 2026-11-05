@@ -1,44 +1,52 @@
-# Automatic MoE conversion and model library
+# Curated MoE model library
 
-Particle 0.5.0 extends configuration-driven recipes with an operation-level MoE graph compiler. A repository name is not a compatibility allowlist.
+Particle 0.6.0 replaces open-ended model support with the exact collection requested on 5 November 2026. Search filters these entries and accepts only approved source/quantization variants; it no longer searches arbitrary Hugging Face models. Graph availability cannot add models to the product catalog.
 
-Search a model name or paste its public Hugging Face URL. Particle resolves an immutable revision, reads configuration and bounded tensor headers, detects the graph and native mixed quantization, then offers Install when its bundled runtime can execute that graph. Unsupported search results remain visible with the specific missing adapter or format. Model cards do not execute code.
+## Models
 
-Install streams source ranges into a `.particle` pack, groups routed tensors into contiguous layer/expert blobs, keeps common tensors separate, preserves the source quantized bytes, and verifies source, payload and expert hashes. It supports indexed shards and single-file safetensors, and extracts an embedded template from tokenizer_config.json when no separate template is supplied. Originals are retained. Existing v1/v2 packs and resumable transfers remain supported.
+| Model | Preferred source |
+| --- | --- |
+| Qwen3.6-35B-A3B | [mlx-community/Qwen3.6-35B-A3B-4bit](https://huggingface.co/mlx-community/Qwen3.6-35B-A3B-4bit) |
+| Qwen3-Coder-30B-A3B | [mlx-community/Qwen3-Coder-30B-A3B-Instruct-4bit](https://huggingface.co/mlx-community/Qwen3-Coder-30B-A3B-Instruct-4bit) |
+| GLM-4.7-Flash | [mlx-community/GLM-4.7-Flash-4bit](https://huggingface.co/mlx-community/GLM-4.7-Flash-4bit) |
+| NVIDIA Nemotron 3.5 Lightning 30B-A3B | [mlx-community/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit](https://huggingface.co/mlx-community/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit) |
+| Qwen3-30B-A3B-Thinking-2507 | [mlx-community/Qwen3-30B-A3B-Thinking-2507-4bit](https://huggingface.co/mlx-community/Qwen3-30B-A3B-Thinking-2507-4bit) |
+| Qwen3-30B-A3B-Instruct-2507 | [mlx-community/Qwen3-30B-A3B-Instruct-2507-4bit](https://huggingface.co/mlx-community/Qwen3-30B-A3B-Instruct-2507-4bit) |
+| Gemma 4 26B-A4B | [mlx-community/gemma-4-26b-a4b-it-4bit](https://huggingface.co/mlx-community/gemma-4-26b-a4b-it-4bit) |
+| Qwen3-30B-A3B | [mlx-community/Qwen3-30B-A3B-4bit](https://huggingface.co/mlx-community/Qwen3-30B-A3B-4bit) |
+| GPT-OSS-20B | [mlx-community/gpt-oss-20b-MXFP4-Q8](https://huggingface.co/mlx-community/gpt-oss-20b-MXFP4-Q8) |
+| DeepSeek-Coder-V2-Lite-Instruct | [mlx-community/DeepSeek-Coder-V2-Lite-Instruct-4bit](https://huggingface.co/mlx-community/DeepSeek-Coder-V2-Lite-Instruct-4bit) |
 
-## Automatic graph execution
+## Fast
 
-Existing Sarvam and Qwen3/Qwen3.5 v1/v2 paths remain intact. New models can use the
-v3 graph compiler across the trusted bundled MLX graph registry. It discovers routed
-projection operations, infers checkpoint assembly from the backend's lazy normalization
-graph, and preserves native affine or supported floating-point quantized bytes.
-Mixtral's unstacked experts, OLMoE's graph and native MXFP4 have focused synthetic
-conversion/reference coverage. Real Mixtral and GPT-OSS metadata inspection passed.
+| Model | Preferred source |
+| --- | --- |
+| Qwen1.5-MoE-A2.7B-Chat | [mlx-community/Qwen1.5-MoE-A2.7B-Chat-4bit](https://huggingface.co/mlx-community/Qwen1.5-MoE-A2.7B-Chat-4bit) |
+| DeepSeekMoE-16B-Chat | [BlueMoonlight/deepseek-moe-16b-chat-mlx-4Bit](https://huggingface.co/BlueMoonlight/deepseek-moe-16b-chat-mlx-4Bit) |
+| MiniCPM-MoE-8x2B | [openbmb/MiniCPM-MoE-8x2B](https://huggingface.co/openbmb/MiniCPM-MoE-8x2B) |
 
-A repository name is not an allowlist. Conversely, membership in the backend registry
-alone is insufficient: the complete graph, parameter inventory, normalization,
-tokenizer/template and memory checks must pass. Unknown operators and custom remote
-code remain unsupported. This does not synthesize arbitrary new mathematics from
-weight names. See [the compiler design and limits](PARTICLE_GRAPH_COMPILER.md).
+Fast is a collection label, not a measured throughput guarantee. MiniCPM's original checkpoint is BF16 and substantially larger than a 4-bit export; native byte-preserving conversion does not silently requantize it. Memory and disk requirements still apply.
 
-## Experts and profiles
+## Conversion and execution
 
-Every installed model has an Active experts selector directly in Installed, also available in Settings. Choices run from one to native top-k for the MLX adapters; the existing Sarvam worker retains its supported 2–6 range. The native count is labelled. Reduced routing is explicitly experimental and can change answer quality. It never changes or requantizes stored weights.
+The existing graph compiler remains an internal implementation mechanism. Catalog admission checks repository identity and configuration dimensions, followed by full header, graph, tokenizer/template and quantization inspection. Related dense, vision-specific, altered or unrelated checkpoints are excluded even when their names partially match. Local imports retain local provenance and must match a supported structural family; tensor metadata alone cannot establish training identity.
 
-Preferences are saved independently per model. Selecting a different model opens a model-bound conversation; returning restores its model. Changing routing for the active worker reloads its context while preserving messages. Cache slots, read workers, prompt chunks and conversation limits remain separate controls. Large resident/cache allocations are checked against this Mac’s physical memory before weight loading. Prompt subchunks are automatically bounded when the worst-case selected-expert staging set would exceed the temporary buffer budget.
+Added native Qwen2-MoE, DeepSeek-MoE and MiniCPM-MoE graphs preserve their respective shared branches, route normalization, attention biases and MiniCPM embedding/residual/output scaling. Nemotron's named block schedule is normalized into the bundled hybrid graph's schedule. Repository `auto_map` pointers are ignored only where a native implementation exists; downloaded repository code is never executed.
 
-## State, installation and distribution
+Unused vision, MTP and backend-redundant source tensors are retained in a checksummed `source-only.bin` archive. They remain part of the exact conversion inventory and original source hash, but are not loaded into inference memory. Gemma uses the text graph and retains its native attention schedule. Original quantization, source files and model licenses are preserved.
 
-Discover / Installed / Downloads share one persistent resumable queue. Public ungated sources only; no publisher token is stored. Paused jobs retain verified progress. New resumptions reconstruct completed source chunks from local payloads and a bounded on-disk header/padding archive; old checkpoints retain their verified re-read path.
+MiniCPM's original PyTorch ZIP64 state dictionary can be inspected and ingested by a bounded native data-only reader. It recognizes tensor metadata/storage references, checks bounds, endianness and contiguous strides, and copies original tensor bytes. It never invokes pickle functions, imports Python modules, or loads arbitrary objects. Unsupported archive encodings receive an error. Remote storage headers use a bounded queue; no whole checkpoint is loaded for inspection.
 
-Only one worker or converter owns the model lease. Recurrent models keep a stable-prefix recurrent checkpoint plus full-attention KV; Qwen3 uses its full-attention cache. Original templates, Instant/Thinking controls, input-byte acknowledgements, Unicode streaming and context exhaustion remain in the desktop protocol. Chronos and Qwen3 Code mode remain disabled pending tool-specific qualification.
+Each installed supported model has its own expert count, cache, read workers, prompt chunk and context profile. Switching to a shorter-context model also bounds its response allowance. Native expert selection is the reference; reducing experts remains explicitly experimental. New graph paths are early-access Chat; model names containing Coder do not by themselves qualify coding-tool execution.
 
-The app bundles conversion, runtime and shaders; testers need neither Xcode nor Python. Model weights download separately. Removing models deletes only app-managed payloads after confirmation; imported originals and conversations remain.
+## Existing installations
 
-## Narrow validation for 0.4.1
+Sarvam/Churo, Chronos, Mixtral and other models outside the collection are no longer offered or selectable. Their files, registry entries and conversations are retained; Installed explains the change and still allows removal. First launch opens the curated library instead of automatically downloading Sarvam. No old model files or chats are deleted during the catalog change.
 
-- Real public Qwen3-30B-A3B-4bit and Qwen3-30B-A3B-Instruct-2507-4bit metadata recognized automatically without downloading weights. The latter preserves 8-bit router overrides.
-- A tiny synthetic Qwen3 checkpoint converted losslessly from one safetensors file, with 4-bit/group-32 weights, raw router and an embedded template. Its full-logit/continuation comparison against upstream selected-expert execution had zero differences over two steps. This is a graph integration check, not trained-model quality or speed qualification.
-- Chronos metadata regression and model-specific expert-range checks are retained. No exhaustive benchmark matrix is rerun for this update, per user instruction.
+The existing ParticleDesign PNG grain/wash materials, green palette, PT Serif/Poppins/Space Mono and dark background remain in use. All thirteen entries are visible immediately; Install appears only after inspection passes. Cached compatible revisions avoid repeating tensor-header inspection during ordinary browsing.
 
-The generic compiler can adapt additional bundled graphs without Particle family recipes. Unsupported operators still need an executable backend implementation; successful repacking alone never qualifies runtime correctness or speed.
+## Evidence and limits
+
+Metadata inspection is distinct from a complete model inference qualification. Focused synthetic byte/parity checks exercise the new graph and archive paths; no complete pretrained checkpoints are downloaded just to test this update. There is no universal speed, memory-fit, long-context quality or tool-call guarantee.
+
+Implementation references: [MLX LM Qwen2-MoE](https://github.com/ml-explore/mlx-lm/blob/main/mlx_lm/models/qwen2_moe.py), [MLX LM DeepSeek](https://github.com/ml-explore/mlx-lm/blob/main/mlx_lm/models/deepseek.py), [OpenBMB MiniCPM model](https://huggingface.co/openbmb/MiniCPM-MoE-8x2B/blob/main/modeling_minicpm.py), [PyTorch serialization](https://docs.pytorch.org/docs/stable/notes/serialization.html). These references inform bundled native code; model repositories are not executed.

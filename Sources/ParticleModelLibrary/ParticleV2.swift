@@ -63,6 +63,8 @@ public struct ParticleV2Manifest: Codable, Equatable, Sendable {
             guard names.insert(path.precomposedStringWithCanonicalMapping.lowercased()).inserted else { throw ModelLibraryError.invalid("Conflicting pack filenames.") }
         }
         for tensor in tensors {
+            let archived=(model.graph?.archivedTensors ?? []).contains(tensor.name)
+            guard (tensor.file == "source-only.bin") == archived,!archived || tensor.layer == nil else {throw ModelLibraryError.invalid("Source-only tensors cannot belong to inference banks.")}
             guard let file = files[tensor.file], tensor.offset >= 0, tensor.bytes > 0, tensor.offset <= file.bytes,
                   tensor.bytes <= file.bytes-tensor.offset, !tensor.shape.isEmpty,tensor.shape.count <= 8,
                   tensor.name.utf8.count <= 1024,tensor.shape.allSatisfy({$0 > 0 && $0 <= Int(Int32.max)}) else { throw ModelLibraryError.invalid("Tensor exceeds its payload: \(tensor.name).") }

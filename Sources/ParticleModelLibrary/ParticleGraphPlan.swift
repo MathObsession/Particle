@@ -29,6 +29,8 @@ public struct ParticleGraphPlan:Codable,Equatable,Sendable {
     public let tensorsSHA256:String
     public let sourceTensorsSHA256:String
     public let assemblies:[Assembly]
+    /// Source-only tensors retained losslessly, never loaded into inference memory.
+    public var archivedTensors:[String]? = nil
     public let projections:[Projection]
     public let routingFields:[String]
     public let nativeExperts:Int
@@ -51,6 +53,8 @@ public struct ParticleGraphPlan:Codable,Equatable,Sendable {
               (1...512).contains(hiddenLayers),(4096...262144).contains(contextLimit),kvBytesPerToken > 0,
               expertBytesPerSlot > 0,residentBytes >= 0,expertBytesPerSlot <= 256*1024*1024*512,residentBytes <= 1_099_511_627_776,
               assemblies.count <= 100_000,sourceTensorsSHA256.count == 64,
+              (archivedTensors?.count ?? 0) <= 100_000,Set(archivedTensors ?? []).count == (archivedTensors?.count ?? 0),
+              (archivedTensors ?? []).allSatisfy({$0.range(of:"^__particle_archive\\.[0-9]+$",options:.regularExpression) != nil}),
               routingFields.count <= 16,routingFields.allSatisfy({$0.range(of:"^[A-Za-z0-9_.]+$",options:.regularExpression) != nil}) else {throw ModelLibraryError.invalid("Invalid generated graph plan.")}
         for p in projections {
             guard p.path.range(of:"^[A-Za-z0-9_]+(?:\\.[A-Za-z0-9_]+)+$",options:.regularExpression) != nil,

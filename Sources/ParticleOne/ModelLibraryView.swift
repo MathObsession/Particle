@@ -49,50 +49,54 @@ struct ModelLibraryView: View {
         VStack(alignment:.leading,spacing:18) {
             HStack {
                 Image(systemName:"magnifyingglass").foregroundStyle(Design.green)
-                TextField("Search any MoE name or paste a Hugging Face link",text:$library.search).textFieldStyle(.plain).onChange(of:library.search){_,_ in library.discover()}
+                TextField("Search curated models or paste a supported repository",text:$library.search).textFieldStyle(.plain).onChange(of:library.search){_,_ in library.discover()}
                 if library.searching {ProgressView().controlSize(.small)}
                 Button{showRepository.toggle()}label:{Image(systemName:"link").frame(width:30,height:30)}.buttonStyle(.plain).help("Add Hugging Face repository")
             }.font(Design.body(12)).padding(13).background(Design.surface,in:RoundedRectangle(cornerRadius:13))
             if showRepository {
                 HStack{TextField("owner/model or Hugging Face URL",text:$library.repository).textFieldStyle(.roundedBorder);Button("Inspect"){library.inspectRepository()}.buttonStyle(HitButtonStyle()).disabled(library.searching)}.font(Design.body(11))
             }
-            if library.search.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty,!library.recommended.isEmpty {
-                VStack(alignment:.leading,spacing:5) {
-                    Text("Recommended").font(Design.heading(23))
-                    Text("A good place to start. Install once, then use your model on this Mac.").font(Design.body(11)).foregroundStyle(Design.muted)
+            ForEach([false,true],id:\.self) {fast in
+                let entries=ModelCatalog.entries.filter{entry in
+                    let query=library.search.trimmingCharacters(in:.whitespacesAndNewlines)
+                    let repository=try? HubRepository.parse(query)
+                    return entry.fast == fast && (repository.map{ModelCatalog.entry(repository:$0)?.id == entry.id} ?? entry.matches(query))
                 }
-                ForEach(library.recommended) { listing in modelCard(listing,recommended:true) }
-            }
-            ForEach(library.listings.filter { listing in
-                let searching = !library.search.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty
-                return searching ? (!listing.isDefault || listing.descriptor.name.localizedCaseInsensitiveContains(library.search) || (listing.descriptor.provenance.repository?.localizedCaseInsensitiveContains(library.search) ?? false)) : !library.recommended.contains(where: { $0.id == listing.id })
-            }) { listing in modelCard(listing,recommended:false) }
-            ForEach(library.candidates.filter {candidate in !library.listings.contains(where:{$0.card?.repository == candidate.id})}) {candidate in
-                card {
-                    VStack(alignment:.leading,spacing:9) {
-                        HStack(alignment:.top) {
-                            Image(systemName:candidate.inspected ? "shippingbox" : "magnifyingglass").foregroundStyle(Design.green)
-                            Text(candidate.card.repository).font(Design.medium(12)).textSelection(.enabled)
-                            Spacer()
-                            if !candidate.inspected {ProgressView().controlSize(.small)}
-                            else {Text("Adapter needed").font(Design.body(10)).foregroundStyle(Design.muted)}
-                        }
-                        Text(candidate.detail).font(Design.body(11)).foregroundStyle(Design.muted).fixedSize(horizontal:false,vertical:true)
-                        Text("\(candidate.card.downloads.formatted()) downloads · \(candidate.card.likes.formatted()) likes · \(candidate.card.license ?? "See source license")").font(Design.body(9)).foregroundStyle(Design.muted)
-                        if let url=URL(string:"https://huggingface.co/"+candidate.id) {Link("View source and available variants ↗",destination:url).font(Design.body(10)).tint(Design.green)}
+                if !entries.isEmpty {
+                    VStack(alignment:.leading,spacing:5) {
+                        Text(fast ? "Fast" : "Models").font(Design.heading(23))
+                        Text(fast ? "Smaller active workloads. Speed still depends on your Mac and storage." : "The ten selected models, with verified conversion before installation.").font(Design.body(11)).foregroundStyle(Design.muted)
+                    }.padding(.top,fast ? 12 : 0)
+                    ForEach(entries) {entry in
+                        let matches=library.listings.filter{ModelCatalog.entry(for:$0.descriptor)?.id == entry.id}
+                        if matches.isEmpty {
+                            card {
+                                HStack(alignment:.top,spacing:14) {
+                                    Image(systemName:fast ? "bolt" : "cpu").font(.system(size:23)).foregroundStyle(Design.green)
+                                    VStack(alignment:.leading,spacing:7) {
+                                        Text(entry.name).font(Design.heading(21))
+                                        Text(entry.repository).font(Design.body(10)).foregroundStyle(Design.muted)
+                                        Text(library.catalogStatus[entry.id] ?? "Checking download and runtime availability…").font(Design.body(11)).foregroundStyle(Design.muted).fixedSize(horizontal:false,vertical:true)
+                                        if entry.id == "minicpm" {Text("Original BF16 checkpoint · Large download · More memory and disk may be required.").font(Design.body(10)).foregroundStyle(Design.muted)}
+                                    }
+                                    Spacer()
+                                    Button("Retry"){library.repository=entry.repository;library.inspectRepository()}.buttonStyle(HitButtonStyle()).disabled(library.searching)
+                                }
+                            }
+                        } else {ForEach(matches){listing in modelCard(listing,recommended:true)}}
                     }
                 }
             }
-            Text("Particle automatically inspects the backend graph, identifies expert matrix operations and compiles a streamed .particle execution plan. Models with unsupported graph operations, tensor layouts or tokenizers show a specific explanation.").font(Design.body(11)).foregroundStyle(Design.muted).lineSpacing(4)
-            if library.next != nil {Button("Load more"){library.discover(loadMore:true)}.buttonStyle(HitButtonStyle()).disabled(library.searching)}
+            Text("Only this curated collection can be installed or selected. Existing files and saved conversations stay on this Mac.").font(Design.body(11)).foregroundStyle(Design.muted).lineSpacing(4)
         }
     }
+
     private func modelCard(_ listing: LibraryListing,recommended:Bool)->some View {
         card {
                     HStack(alignment:.top,spacing:16) {
                         Image(systemName:"cpu").font(.system(size:25)).foregroundStyle(Design.green).padding(.top,4)
                         VStack(alignment:.leading,spacing:7) {
-                            HStack{Text(listing.descriptor.name).font(Design.heading(22));if listing.isDefault {Text("DEFAULT").font(Design.medium(8)).tracking(1).padding(6).background(Design.line,in:Capsule())} else if listing.descriptor.architecture != .sarvam {Text("EARLY ACCESS").font(Design.medium(8)).tracking(0.6).padding(6).background(Design.line,in:Capsule())}}
+                            HStack{Text(ModelCatalog.entry(for:listing.descriptor)?.name ?? listing.descriptor.name).font(Design.heading(22));if listing.isDefault {Text("DEFAULT").font(Design.medium(8)).tracking(1).padding(6).background(Design.line,in:Capsule())} else if listing.descriptor.architecture != .sarvam {Text("EARLY ACCESS").font(Design.medium(8)).tracking(0.6).padding(6).background(Design.line,in:Capsule())}}
                             Text(listing.descriptor.provenance.repository ?? "Local model").font(Design.body(10)).foregroundStyle(Design.muted)
                             if recommended,let reason=ModelRecommendations.reason(for:listing.descriptor) {Text(reason).font(Design.body(11)).foregroundStyle(Design.muted).fixedSize(horizontal:false,vertical:true)}
                             Text("\(listing.descriptor.layers) layers · \(listing.descriptor.experts) total experts").font(Design.body(10)).foregroundStyle(Design.muted)
@@ -102,6 +106,8 @@ struct ModelLibraryView: View {
                             Text("Allow "+ByteCountFormatter.string(fromByteCount:listing.descriptor.sourceBytes+2_147_483_648,countStyle:.file)+" free for installation").font(Design.body(10)).foregroundStyle(Design.muted)
                             let profile=ModelRuntimeProfile(model:listing.descriptor,physicalMemory:ProcessInfo.processInfo.physicalMemory)
                             Text((listing.descriptor.supportsTools ? "Chat and Code · " : "Chat only · ")+"\(profile.context.formatted()) context on this Mac · Internal SSD recommended").font(Design.body(10)).foregroundStyle(Design.muted)
+                            if let issue=ModelRuntimeProfile.memoryIssue(listing.descriptor) {Text(issue).font(Design.body(10)).foregroundStyle(Design.muted).fixedSize(horizontal:false,vertical:true)}
+                            if ModelCatalog.entry(for:listing.descriptor)?.id == "minicpm" {Text("Original BF16 weights · Conversion preserves precision and does not reduce the download size.").font(Design.body(10)).foregroundStyle(Design.muted)}
                             if let card = listing.card {Text("\(card.downloads.formatted()) downloads · \(card.likes.formatted()) likes on Hugging Face").font(Design.body(9)).foregroundStyle(Design.muted)}
                             if let source = listing.descriptor.provenance.repository,let url = URL(string:"https://huggingface.co/"+source) {Link("Model card ↗",destination:url).font(Design.body(10)).tint(Design.green)}
                         }
@@ -109,7 +115,7 @@ struct ModelLibraryView: View {
                         if let installed = library.installed.first(where: {$0.id == listing.id}),WorkspaceModel.modelExists(installed.path) {
                             Button(model.settings.modelPath == installed.path ? "Selected" : "Use model"){model.useInstalledModel(installed)}.buttonStyle(WashedButtonStyle(compact:true)).disabled(model.busy || model.loading || model.settings.modelPath == installed.path)
                         } else {
-                            Button("Install"){model.installLibraryModel(listing);tab = "Downloads"}.buttonStyle(WashedButtonStyle(compact:true)).disabled(model.modelInstallationActive || !listing.report.installable)
+                            Button("Install"){model.installLibraryModel(listing);tab = "Downloads"}.buttonStyle(WashedButtonStyle(compact:true)).disabled(model.modelInstallationActive || !listing.report.installable || ModelRuntimeProfile.memoryIssue(listing.descriptor) != nil)
                         }
                     }
                     if let readme = listing.readme,!readme.isEmpty {DisclosureGroup("About this model"){MarkdownContent(source:readme,compact:true).padding(.top,10)}.font(Design.body(10)).padding(.top,12)}
@@ -117,11 +123,12 @@ struct ModelLibraryView: View {
     }
     private var installed: some View {
         VStack(alignment:.leading,spacing:14) {
-            if library.installed.isEmpty {Text("Install the default model or import an existing model to begin.").font(Design.body(12)).foregroundStyle(Design.muted)}
+            if library.installed.isEmpty {Text("Choose a model from Models or Fast to begin.").font(Design.body(12)).foregroundStyle(Design.muted)}
             ForEach(library.installed){value in
                 card {
                     VStack(alignment:.leading,spacing:12) {
-                        HStack{Text(value.descriptor.name).font(Design.heading(21));Spacer();Button("Use model"){model.useInstalledModel(value)}.buttonStyle(WashedButtonStyle(compact:true)).disabled(model.busy || model.loading || model.settings.modelPath == value.path || !WorkspaceModel.modelExists(value.path))}
+                        HStack{Text(value.descriptor.name).font(Design.heading(21));Spacer();Button("Use model"){model.useInstalledModel(value)}.buttonStyle(WashedButtonStyle(compact:true)).disabled(model.busy || model.loading || model.settings.modelPath == value.path || !WorkspaceModel.modelExists(value.path) || !ModelCatalog.allows(value.descriptor))}
+                        if !ModelCatalog.allows(value.descriptor) {Text("No longer in the supported collection. Your model files and conversations are preserved.").font(Design.body(10)).foregroundStyle(Design.muted)}
                         if !WorkspaceModel.modelExists(value.path) {Text("Model files are unavailable. Reinstall from Discover or import the source again; conversations are retained.").font(Design.body(10)).foregroundStyle(Design.muted)}
                         Text(value.descriptor.quantization.label+" · "+ByteCountFormatter.string(fromByteCount:value.descriptor.sourceBytes,countStyle:.file)).font(Design.body(11)).foregroundStyle(Design.muted)
                         HStack {
@@ -136,7 +143,7 @@ struct ModelLibraryView: View {
                         if value.profile.activeExperts != value.descriptor.activeExperts {Text("Reduced routing is experimental: fewer experts can improve speed but can reduce answer quality. A change reloads the model context; your messages are retained.").font(Design.body(10)).foregroundStyle(Design.muted)}
                         HStack {
                             Button("Model settings…"){model.useInstalledModel(value);dismiss();model.showSettings = true}.buttonStyle(HitButtonStyle()).disabled(model.busy || model.loading)
-                            Button("Optimize for this Mac"){model.optimizeLibraryModel(value)}.buttonStyle(HitButtonStyle()).disabled(model.busy || model.loading || model.modelInstallationActive || !ArchitectureRegistry.report(value.descriptor).installable)
+                            Button("Optimize for this Mac"){model.optimizeLibraryModel(value)}.buttonStyle(HitButtonStyle()).disabled(model.busy || model.loading || model.modelInstallationActive || !ArchitectureRegistry.report(value.descriptor).installable || !ModelCatalog.allows(value.descriptor))
                             Button("Show in Finder"){NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath:value.path)])}.buttonStyle(HitButtonStyle())
                             Spacer()
                             if model.connected && model.settings.modelPath == value.path {Button("Unload"){model.unload()}.buttonStyle(HitButtonStyle()).disabled(model.busy || model.loading)}

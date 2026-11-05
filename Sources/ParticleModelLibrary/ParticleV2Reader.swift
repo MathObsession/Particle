@@ -53,7 +53,7 @@ public final class ParticleV2Reader: @unchecked Sendable {
     }
     public func verifyResidentFiles() throws {
         let expertFiles = Set(manifest.expertHashes.keys)
-        for (name,file) in manifest.files where !expertFiles.contains(name) {
+        for (name,file) in manifest.files where !expertFiles.contains(name) && name != "source-only.bin" {
             let fd = try ParticleIO.openRelative(root:root,path:name);defer{close(fd)}
             guard try ParticleIO.hashFile(descriptor:fd,size:Int(file.bytes)) == file.sha256 else {throw ModelLibraryError.checksum(name)}
         }

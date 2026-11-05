@@ -75,7 +75,11 @@ public enum ArchitectureRegistry {
         }
         let config = try boundedData(url.appendingPathComponent("config.json"), limit: 1_048_576)
         let map:[String:String]
-        if FileManager.default.fileExists(atPath:url.appendingPathComponent("model.safetensors.index.json").path) {
+        var archiveRecords:[String:SafetensorRecord]?
+        if FileManager.default.fileExists(atPath:url.appendingPathComponent("pytorch_model.bin").path),!FileManager.default.fileExists(atPath:url.appendingPathComponent("model.safetensors.index.json").path) {
+            let source=try LocalModelByteSource(root:url,paths:["pytorch_model.bin"])
+            archiveRecords=try TorchTensorArchive.localRecords(source,file:source.files[0]);map=Dictionary(uniqueKeysWithValues:archiveRecords!.keys.map{($0,"pytorch_model.bin")})
+        } else if FileManager.default.fileExists(atPath:url.appendingPathComponent("model.safetensors.index.json").path) {
             let index=try boundedData(url.appendingPathComponent("model.safetensors.index.json"),limit:16*1024*1024)
             guard let object=try JSONSerialization.jsonObject(with:index) as? [String:Any],let value=object["weight_map"] as? [String:String],!value.isEmpty,value.count <= 100_000 else {throw ModelLibraryError.invalid("Invalid local checkpoint index.")};map=value
         } else {
@@ -87,8 +91,9 @@ public enum ArchitectureRegistry {
         var bytes: Int64 = 0
         for filename in Set(map.values).sorted() {
             try ParticleFormat.validatePath(filename)
-            guard !filename.contains("/"), filename.hasSuffix(".safetensors") else { throw ModelLibraryError.invalid("Unsafe checkpoint shard path.") }
+            guard !filename.contains("/"), filename.hasSuffix(".safetensors") || (filename == "pytorch_model.bin" && archiveRecords != nil) else { throw ModelLibraryError.invalid("Unsafe checkpoint shard path.") }
             let file = url.appendingPathComponent(filename)
+            if let archiveRecords {tensors=archiveRecords;bytes=Int64(try file.resourceValues(forKeys:[.fileSizeKey]).fileSize ?? 0);continue}
             let header = try SafetensorsHeader.read(file)
             bytes += Int64(try file.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0)
             for (name, record) in header.tensors {
@@ -104,7 +109,7 @@ public enum ArchitectureRegistry {
         if FileManager.default.fileExists(atPath:templateURL.path) {template=String(decoding:try boundedData(templateURL,limit:262_144),as:UTF8.self)}
         else {
             let c=try JSONSerialization.jsonObject(with:boundedData(url.appendingPathComponent("tokenizer_config.json"),limit:1_048_576)) as? [String:Any]
-            guard let value=c?["chat_template"] as? String,value.utf8.count <= 262_144 else {throw ModelLibraryError.invalid("Missing embedded chat template.")};template=value
+            guard let value=(c?["chat_template"] as? String) ?? ModelCatalog.fallbackTemplate(configuration:config,repository:nil),value.utf8.count <= 262_144 else {throw ModelLibraryError.invalid("Missing embedded chat template.")};template=value
         }
         let extras = ["config.json","model.safetensors.index.json","tokenizer.json","tokenizer_config.json","chat_template.jinja","generation_config.json","README.md","LICENSE","LICENSE.txt"].filter{FileManager.default.fileExists(atPath:url.appendingPathComponent($0).path)}
         let source = try LocalModelByteSource(root:url,paths:Array(Set(map.values))+extras)
@@ -144,7 +149,7 @@ public enum ArchitectureRegistry {
         }
     }
     public static func configurationIncompatibility(_ configuration:Data) throws -> String? {
-        guard let root=try JSONSerialization.jsonObject(with:configuration) as? [String:Any],let type=root["model_type"] as? String,!type.isEmpty else {return "The checkpoint has no model_type or executable graph contract."}
+        guard let root=try JSONSerialization.jsonObject(with:configuration) as? [String:Any],!(root["model_type"] as? String ?? (ModelCatalog.entry(configuration:configuration,repository:nil)?.type ?? "")).isEmpty else {return "The checkpoint has no model_type or executable graph contract."}
         if let quant=(root["quantization"] ?? root["quantization_config"]) as? [String:Any],let bits=quant["bits"] as? Int,![2,3,4,5,6,8].contains(bits) {return "Choose a supported native affine-quantized or microscaling bit width."}
         // Family-specific checks are a fast path, not a discovery allowlist.
         // Other layouts are compiled from the backend's actual typed graph.
@@ -159,10 +164,11 @@ public enum ArchitectureRegistry {
             guard template.contains("<|im_start|>"),template.contains("<|im_end|>") else {return .unsupported("A Qwen chat template with Instant/Thinking support is required.")}
             let artifact="mlx-affine-\(schema.bits)bit-g\(schema.groupSize)"
             let id=repository.flatMap {repo in revision.map{ModelDescriptor.identity(repository:repo,revision:$0,artifact:artifact)}} ?? "local:"+ModelDescriptor.identity(repository:"local",revision:sourceIdentity ?? String(decoding:configuration,as:UTF8.self),artifact:artifact)
-            let descriptor=ModelDescriptor(id:id,name:repository?.split(separator:"/").last.map(String.init) ?? "Imported MoE",architecture:schema.architecture,artifact:.mlx,
+            var descriptor=ModelDescriptor(id:id,name:repository?.split(separator:"/").last.map(String.init) ?? "Imported MoE",architecture:schema.architecture,artifact:.mlx,
                 provenance:.init(repository:repository,revision:revision,license:license),quantization:.init(scheme:"MLX affine",bits:schema.bits,groupSize:schema.groupSize,overrides:overrides),
                 layers:schema.layers,experts:schema.experts,activeExperts:schema.active,contextLimit:schema.context,sourceBytes:sourceBytes,
-                kvBytesPerToken:Int64(schema.fullAttentionLayers.count)*Int64(schema.kvHeads)*Int64(schema.headDim)*8,supportsTools:false)
+                kvBytesPerToken:Int64(schema.fullAttentionLayers.count)*Int64(schema.kvHeads)*Int64(schema.headDim)*8,supportsTools:false,supportsReasoning:template.contains("<think>"))
+            descriptor.catalogID=ModelCatalog.entry(configuration:configuration,repository:repository)?.id
             try descriptor.validate();return report(descriptor)
         } catch {
             do {return try inspectCompiledGraph(configuration:configuration,tensors:tensors,template:template,repository:repository,revision:revision,sourceBytes:sourceBytes,license:license,sourceIdentity:sourceIdentity)}
@@ -177,10 +183,11 @@ public enum ArchitectureRegistry {
         let quant=(root["quantization"] ?? root["quantization_config"]) as? [String:Any] ?? [:]
         let id=repository.flatMap{repo in revision.map{ModelDescriptor.identity(repository:repo,revision:$0,artifact:"particle-graph-1")}} ?? "local:"+ModelDescriptor.identity(repository:"local",revision:sourceIdentity ?? plan.configurationSHA256,artifact:"particle-graph-1")
         let overrides=quant.compactMapValues{($0 as? [String:Any])?["bits"] as? Int}
-        let descriptor=ModelDescriptor(id:id,name:repository?.split(separator:"/").last.map(String.init) ?? "Imported MoE graph",architecture:.mlxGraph,artifact:.mlx,
+        var descriptor=ModelDescriptor(id:id,name:repository?.split(separator:"/").last.map(String.init) ?? "Imported MoE graph",architecture:.mlxGraph,artifact:.mlx,
             provenance:.init(repository:repository,revision:revision,license:license),quantization:.init(scheme:"Native graph",bits:quant["bits"] as? Int,groupSize:quant["group_size"] as? Int,overrides:overrides),
-            layers:plan.hiddenLayers,experts:plan.banks.values.max() ?? 2,activeExperts:plan.nativeExperts,contextLimit:plan.contextLimit,sourceBytes:sourceBytes,kvBytesPerToken:plan.kvBytesPerToken,supportsTools:false,graph:plan,supportsReasoning:(template.contains("enable_thinking") && template.contains("<think>")) || (template.contains("<|channel|>") && template.contains("<|message|>")))
-        try descriptor.validate();return report(descriptor)
+            layers:plan.hiddenLayers,experts:plan.banks.values.max() ?? 2,activeExperts:plan.nativeExperts,contextLimit:plan.contextLimit,sourceBytes:sourceBytes,kvBytesPerToken:plan.kvBytesPerToken,supportsTools:false,graph:plan,supportsReasoning:template.contains("<think>") || (template.contains("<|channel|>") && template.contains("<|message|>")) || (template.contains("<|channel>thought") && template.contains("<channel|>")))
+        descriptor.catalogID=ModelCatalog.entry(configuration:configuration,repository:repository)?.id
+            try descriptor.validate();return report(descriptor)
     }
     public static func validateGraphTokenizer(tokenizer:Data,configuration:Data) throws {
         guard let root=try JSONSerialization.jsonObject(with:tokenizer) as? [String:Any],let model=root["model"] as? [String:Any],

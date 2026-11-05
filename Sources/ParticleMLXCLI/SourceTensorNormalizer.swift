@@ -8,7 +8,7 @@ import ParticleModelLibrary
 /// any model tensor. Only byte-preserving rename/reshape/leading-concat passes
 /// are lowered to file-copy ranges; other transformations are reported.
 @MainActor enum SourceTensorNormalizer {
-    struct Result {let tensors:[String:SafetensorRecord];let assemblies:[ParticleGraphPlan.Assembly]}
+    struct Result {let tensors:[String:SafetensorRecord];let assemblies:[ParticleGraphPlan.Assembly];let archived:[String]}
     static func normalize(model:any LanguageModel,records:[SafetensorRecord]) throws -> Result {
         let original=Dictionary(uniqueKeysWithValues:records.map{($0.name,$0)})
         let namer=NodeNamer();var probes=[String:MLXArray](),symbols=[String:SafetensorRecord](),sourceSymbols=[String:String]()
@@ -62,7 +62,16 @@ import ParticleModelLibrary
             result[name]=record;claimed.formUnion(sources.map(\.name))
             assemblies.append(.init(target:record,sources:sources.map{.init(name:$0.name,dtype:$0.dtype,shape:$0.shape,offset:0,bytes:$0.bytes)}))
         }
-        guard claimed == Set(original.keys) else {throw ModelLibraryError.incompatible("The model normalizer discards source tensors. Export a text-only native checkpoint; Particle will not silently drop weights.")}
-        return Result(tensors:result,assemblies:assemblies)
+        // Keep non-text, MTP and backend-redundant source tensors in a separate
+        // checksummed archive. The trusted backend deliberately omits them;
+        // retaining their bytes avoids silent loss or RAM residency.
+        var archived=[String]()
+        for (index,name) in Set(original.keys).subtracting(claimed).sorted().enumerated() {
+            let source=original[name]!,target="__particle_archive.\(index)"
+            guard result[target] == nil else {throw ModelLibraryError.invalid("Reserved archive tensor name collision.")}
+            let record=SafetensorRecord(name:target,dtype:source.dtype,shape:source.shape,offset:0,bytes:source.bytes)
+            result[target]=record;archived.append(target);assemblies.append(.init(target:record,sources:[.init(name:source.name,dtype:source.dtype,shape:source.shape,offset:0,bytes:source.bytes)]))
+        }
+        return Result(tensors:result,assemblies:assemblies,archived:archived)
     }
 }

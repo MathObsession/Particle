@@ -13,10 +13,11 @@ extension WorkspaceModel {
         return library.installed.contains{$0.id == settings.modelID && $0.path == settings.modelPath && Self.modelExists($0.path)}
     }
     var selectedModelDescriptor: ModelDescriptor {library.installed.first(where: {$0.path == settings.modelPath})?.descriptor ?? .sarvam}
-    var selectedModelName: String {selectedModelDescriptor.id == ModelDescriptor.sarvam.id ? (codeMode ? "Churo Code" : "Churo Chat") : selectedModelDescriptor.name}
+    var selectedModelName: String {if !ModelCatalog.allows(selectedModelDescriptor){return "Choose model"};return selectedModelDescriptor.id == ModelDescriptor.sarvam.id ? (codeMode ? "Churo Code" : "Churo Chat") : selectedModelDescriptor.name}
     var currentSystemPrompt: String {state.systemPrompt(model:selectedModelDescriptor)}
     func prepareConversationModel(_ id: String?, requireTools: Bool = false) -> Bool {
         let id = id ?? ModelDescriptor.sarvam.id
+        if !preview {guard let value=library.installed.first(where:{$0.id == id}),ModelCatalog.allows(value.descriptor) else {notice=ModelCatalog.outsideCatalog;showModelLibrary=true;return false}}
         if requireTools {
             let descriptor = library.installed.first(where:{$0.id == id})?.descriptor ?? .sarvam
             guard descriptor.supportsTools else {notice = "This session’s model has not qualified for coding tools.";return false}
@@ -35,16 +36,18 @@ extension WorkspaceModel {
         next.slots = installed.profile.slots;next.context = installed.profile.context;next.activeExperts = installed.profile.activeExperts;next.useMirror = false
         next.readWorkers = installed.profile.readWorkers;next.prefillChunk = installed.profile.prefillChunk
         next.context=min(next.context,installed.descriptor.architecture == .sarvam ? ParticleContextPolicy.maximum() : ModelRuntimeProfile(model:installed.descriptor).context)
+        next.maxNew=min(next.maxNew,max(256,next.context/2))
         guard next.isValid(for:installed.descriptor) else {notice="This model’s saved profile is unavailable on this Mac. Re-import it or choose supported model settings; your transcript is preserved.";return false}
         updateSettings(next);return true
     }
     func useInstalledModel(_ installed: InstalledModel) {
         guard !busy,!loading,!modelInstallationActive,installed.path != settings.modelPath else {return}
-        guard ArchitectureRegistry.report(installed.descriptor).installable,Self.modelExists(installed.path) else {notice = "This model is unavailable or its runtime has not qualified yet.";return}
+        guard (preview || ModelCatalog.allows(installed.descriptor)),ArchitectureRegistry.report(installed.descriptor).installable,Self.modelExists(installed.path) else {notice = "This model is unavailable or its runtime has not qualified yet.";return}
         var next = settings;next.modelPath = installed.path;next.modelID = installed.id;next.useMirror = false
         next.slots = installed.profile.slots;next.context = installed.profile.context;next.activeExperts = installed.profile.activeExperts
         next.readWorkers = installed.profile.readWorkers;next.prefillChunk = installed.profile.prefillChunk
         next.context=min(next.context,installed.descriptor.architecture == .sarvam ? ParticleContextPolicy.maximum() : ModelRuntimeProfile(model:installed.descriptor).context)
+        next.maxNew=min(next.maxNew,max(256,next.context/2))
         guard next.isValid(for:installed.descriptor) else {notice="This model’s saved profile is unavailable on this Mac. Re-import it or choose supported settings.";return}
         // Model selection opens a new chat; returning to a saved code session
         // restores that session's original model binding.
@@ -54,7 +57,7 @@ extension WorkspaceModel {
         updateSettings(next)
     }
     func installLibraryModel(_ listing: LibraryListing) {
-        guard !modelInstallationActive,listing.report.installable else {return}
+        guard !modelInstallationActive,ModelCatalog.allows(listing.descriptor),listing.report.installable else {return}
         // The default uses the existing independently pinned distribution receipt.
         guard listing.isDefault else {beginNativeLibraryInstall(listing);return}
         libraryInstallJob = library.beginDefaultJob(destination:library.managedRoot)
@@ -63,6 +66,7 @@ extension WorkspaceModel {
     }
     func resumeLibraryInstall(_ job: ModelInstallJob) {
         guard !installer.running,nativeLibraryProcess == nil,nativeLibraryTask == nil else {return}
+        guard job.localSource != nil || ModelCatalog.entry(repository:job.repository) != nil else {library.message=ModelCatalog.outsideCatalog;return}
         if job.localSource == nil,job.repository == ModelDescriptor.sarvam.provenance.repository,job.revision == ModelDescriptor.sarvam.provenance.revision {
             libraryInstallJob = job.id;beginInstall(root:URL(fileURLWithPath:job.destination,isDirectory:true),selectWhenComplete:false)
         } else {resumeNativeLibraryInstall(job)}
@@ -77,7 +81,7 @@ extension WorkspaceModel {
     func importLibraryModel() {
         guard !busy,!loading,!code.active,!modelInstallationActive else {return}
         let picker = NSOpenPanel();picker.canChooseFiles = true;picker.canChooseDirectories = true;picker.allowsMultipleSelection = false
-        picker.message = "Choose a .particle pack, Sarvam GGUF, or indexed MLX model folder. Files stay on this Mac."
+        picker.message = "Choose a supported model’s .particle pack or safetensors folder. Files stay on this Mac."
         guard picker.runModal() == .OK,let source = picker.url else {return}
         inspectLocalLibraryModel(source)
     }

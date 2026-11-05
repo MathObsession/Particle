@@ -42,6 +42,7 @@ public struct ModelDescriptor: Codable, Equatable, Identifiable, Sendable {
     public let supportsTools: Bool
     public let graph:ParticleGraphPlan?
     public let supportsReasoning:Bool?
+    public var catalogID:String? = nil
     public init(id: String, name: String, architecture: ModelArchitecture, artifact: ModelArtifact,
                 provenance: ModelProvenance, quantization: ModelQuantization, layers: Int, experts: Int,
                 activeExperts: Int, contextLimit: Int, sourceBytes: Int64, kvBytesPerToken: Int64, supportsTools: Bool,graph:ParticleGraphPlan? = nil,supportsReasoning:Bool? = nil) {

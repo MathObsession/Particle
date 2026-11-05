@@ -14,14 +14,12 @@ The SwiftUI app uses a green, grain-textured ParticleDesign interface with PT Se
 - [Building from source](docs/BUILDING_PARTICLE.md)
 - [Model library, lossless conversion and adapter status](docs/MODEL_LIBRARY.md)
 
-Particle 0.5.0 adds an automatic MoE graph compiler: it inspects a bundled MLX graph,
-infers expert projections and checkpoint assemblies, and generates a verified v3
-`.particle` execution plan without a Particle-specific adapter for each family.
-Models includes public Hugging Face search, starter recommendations and per-model
-expert controls. Sarvam remains the default; other models are early-access Chat.
-Compatibility depends on supported graph operations, native layouts and available
-memory, with no universal speed guarantee. See the [graph compiler](docs/PARTICLE_GRAPH_COMPILER.md)
-and [model-library guide](docs/MODEL_LIBRARY.md).
+Particle 0.6.0 offers a curated collection of ten main MoE models and three **Fast**
+models, with restricted search, verified `.particle` conversion and per-model expert
+controls. Open-ended model admission has been removed. Existing model files and
+conversations are preserved. See the [model library and supported sources](docs/MODEL_LIBRARY.md).
+The graph compiler handles conversion internally; compatible graph paths remain
+early-access Chat, with hardware-dependent memory and speed limits.
 
 The underlying engine is a TurboFieldfare fork adapted to the Sarvam 30B base model, with Swift/Metal inference and bounded MoE expert streaming from GGUF or native `.particle` packs. Churo names describe the assistant experience, not newly trained weights. Original licenses and technical attribution are retained. This source repository contains no model weights, credentials, chats, or build archives.
 

@@ -101,11 +101,12 @@ public actor HuggingFaceClient {
         try await http.get(Self.resolve(card, path: path), limit: limit).0
     }
     public func inspect(_ card: HubModelCard) async throws -> CompatibilityReport {
+        guard ModelCatalog.entry(repository:card.repository) != nil else {return .unsupported(ModelCatalog.outsideCatalog)}
         guard !card.gated else { return .unsupported("Only public, ungated models are available in this release.") }
         if card.files.contains(where:{$0.path == "manifest.json"}) {
             return try await NativePackDownload.plan(source:RemoteModelByteSource(card:card,http:http)).report
         }
-        guard card.files.contains(where:{$0.path == "config.json"}),card.files.contains(where:{$0.path.hasSuffix(".safetensors")}) else {
+        guard card.files.contains(where:{$0.path == "config.json"}),card.files.contains(where:{$0.path.hasSuffix(".safetensors") || $0.path == "pytorch_model.bin"}) else {
             return .unsupported("This source is not an MLX safetensors MoE checkpoint. Choose an MLX affine variant; GGUF and other formats require a matching compute adapter.")
         }
         let plan=try await MLXPackConverter.plan(source:RemoteModelByteSource(card:card,http:http),provenance:.init(repository:card.repository,revision:card.revision,license:card.license))

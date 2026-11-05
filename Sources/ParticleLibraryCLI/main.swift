@@ -123,7 +123,8 @@ import ParticlePackCore
             } else {
                 let root = URL(fileURLWithPath:values["--source"]!,isDirectory:true)
                 let shards:[String]
-                if FileManager.default.fileExists(atPath:root.appendingPathComponent("model.safetensors.index.json").path) {
+                if FileManager.default.fileExists(atPath:root.appendingPathComponent("pytorch_model.bin").path),!FileManager.default.fileExists(atPath:root.appendingPathComponent("model.safetensors.index.json").path) {shards=["pytorch_model.bin"]}
+                else if FileManager.default.fileExists(atPath:root.appendingPathComponent("model.safetensors.index.json").path) {
                     let data=try ArchitectureRegistry.boundedData(root.appendingPathComponent("model.safetensors.index.json"),limit:16*1024*1024)
                     guard let object=try JSONSerialization.jsonObject(with:data) as? [String:Any],let map=object["weight_map"] as? [String:String] else {throw ModelLibraryError.invalid("Invalid checkpoint index.")};shards=Array(Set(map.values))
                 } else {
@@ -134,6 +135,7 @@ import ParticlePackCore
                 source = try LocalModelByteSource(root:root,paths:shards+metadata)
             }
             let plan = try await MLXPackConverter.plan(source:source,provenance:provenance,preferGraph:flags.contains("--graph"))
+            guard flags.contains("--graph") || ModelCatalog.allows(plan.model) else {throw ModelLibraryError.incompatible(ModelCatalog.outsideCatalog)}
             if flags.contains("--plan") {try emit(plan);return}
             guard ArchitectureRegistry.report(plan.model).installable || flags.contains("--allow-unqualified-conversion") else {
                 throw ModelLibraryError.incompatible("This runtime is not qualified. Development conversion requires --allow-unqualified-conversion; the pack will remain unavailable in the public library.")

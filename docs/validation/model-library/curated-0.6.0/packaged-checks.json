@@ -1,0 +1,9 @@
+{
+  "version": "0.6.0",
+  "build": "20261105145326",
+  "native_pytorch_inspection": true,
+  "bundled_compiler": true,
+  "bundled_metal_runtime": true,
+  "developer_environment_removed": true,
+  "trained_model_benchmark": false
+}

@@ -3,6 +3,13 @@ import ParticleFormat
 import ParticleDesktopProtocol
 
 public struct ModelRuntimeProfile: Codable, Equatable, Sendable {
+    public static func memoryIssue(_ model:ModelDescriptor,physicalMemory:UInt64=ProcessInfo.processInfo.physicalMemory)->String? {
+        guard let graph=model.graph else{return nil}
+        let profile=Self(model:model,physicalMemory:physicalMemory)
+        let required=graph.residentBytes+graph.expertBytesPerSlot*Int64(profile.slots)+512*1024*1024
+        guard required>=Int64(physicalMemory)*3/4 else{return nil}
+        return "This checkpoint’s resident weights and minimum expert cache exceed this Mac’s memory allowance. Choose a smaller quantization or use a Mac with more RAM."
+    }
     public var slots: Int
     public var readWorkers: Int
     public var prefillChunk: Int
@@ -55,13 +62,13 @@ public struct InstalledModelRegistry: Codable, Sendable {
     public func save(to url: URL) throws {
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true, attributes: [.posixPermissions:0o700])
         let data=try ParticleFormat.encode(self)
-        guard data.count <= 4*1024*1024 else {throw ModelLibraryError.invalid("The model registry reached its size limit. Existing records were preserved.")}
+        guard data.count <= 32*1024*1024 else {throw ModelLibraryError.invalid("The model registry reached its size limit. Existing records were preserved.")}
         try data.write(to: url, options: [.atomic, .completeFileProtectionUnlessOpen])
         try FileManager.default.setAttributes([.posixPermissions:0o600], ofItemAtPath: url.path)
     }
     public static func load(from url: URL) throws -> Self {
         guard FileManager.default.fileExists(atPath: url.path) else { return Self() }
-        let value = try JSONDecoder().decode(Self.self, from: ArchitectureRegistry.boundedData(url, limit: 4*1024*1024))
+        let value = try JSONDecoder().decode(Self.self, from: ArchitectureRegistry.boundedData(url, limit: 32*1024*1024))
         guard value.version == 1, value.models.count <= 1024, Set(value.models.map(\.id)).count == value.models.count else { throw ModelLibraryError.invalid("The installed-model registry is invalid. Existing model files were preserved.") }
         for model in value.models { try model.descriptor.validate() }
         return value

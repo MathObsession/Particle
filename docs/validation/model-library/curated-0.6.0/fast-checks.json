@@ -1,0 +1,26 @@
+[
+  {
+    "model_type": "qwen2_moe",
+    "tensor_byte_checks": 38,
+    "archive_preserved": true,
+    "pytorch_ingestion": true,
+    "full_logit_difference": 0,
+    "continuation_difference": 0
+  },
+  {
+    "model_type": "deepseek",
+    "tensor_byte_checks": 26,
+    "archive_preserved": true,
+    "pytorch_ingestion": true,
+    "full_logit_difference": 0,
+    "continuation_difference": 0
+  },
+  {
+    "model_type": "minicpm",
+    "tensor_byte_checks": 23,
+    "archive_preserved": true,
+    "pytorch_ingestion": true,
+    "full_logit_difference": 0,
+    "continuation_difference": 0
+  }
+]

@@ -23,6 +23,7 @@ struct LibraryCandidate:Identifiable {
 }
 
 @MainActor final class ModelLibraryStore: ObservableObject {
+    @Published var catalogStatus=[String:String]()
     @Published var registry = InstalledModelRegistry()
     @Published var listings = [LibraryListing]()
     @Published var candidates = [LibraryCandidate]()
@@ -49,16 +50,16 @@ struct LibraryCandidate:Identifiable {
     init(root: URL) {
         self.root = root
         let standard = LibraryListing(descriptor:.sarvam,card:nil,report:ArchitectureRegistry.report(.sarvam))
-        listings = [standard]
+        listings = []
         do {
             registry = try InstalledModelRegistry.load(from:root.appendingPathComponent("installed-models.json"))
         } catch {saveBlocked = true;message = "The installed-model registry could not be opened. Existing records and weights have been preserved. \(error.localizedDescription)"}
         do {
             let cache = root.appendingPathComponent("model-library-cache.json")
             if FileManager.default.fileExists(atPath:cache.path) {
-                let decoded = try JSONDecoder().decode([LibraryListing].self,from:ArchitectureRegistry.boundedData(cache,limit:4*1024*1024))
-                if let cached = decoded.first(where:{$0.isDefault}) {listings = [.init(descriptor:.sarvam,card:cached.card,report:standard.report,readme:cached.readme)]}
-                listings += decoded.filter { $0.id != standard.id && (try? $0.descriptor.validate()) != nil && ArchitectureRegistry.report($0.descriptor).installable }
+                let decoded = try JSONDecoder().decode([LibraryListing].self,from:ArchitectureRegistry.boundedData(cache,limit:16*1024*1024))
+
+                listings += decoded.filter { $0.id != standard.id && ModelCatalog.allows($0.descriptor) && (try? $0.descriptor.validate()) != nil && ArchitectureRegistry.report($0.descriptor).installable }
             }
         } catch {message = "Cached browsing is unavailable. Refresh Discover to fetch model information again."}
         do {
@@ -109,72 +110,40 @@ struct LibraryCandidate:Identifiable {
         var value=registry.models[index];value.calibration=record;value.profile=record.selected
         var next=registry;try next.register(value);try next.save(to:root.appendingPathComponent("installed-models.json"));registry=next
     }
-    func discover(loadMore: Bool = false) {
-        work?.cancel()
-        let generation = UUID();searchGeneration = generation
-        if let retryAfter, retryAfter > Date() {message = ModelLibraryError.rateLimited(retryAfter).localizedDescription;return}
-        let query = search.trimmingCharacters(in:.whitespacesAndNewlines),page = loadMore ? next : nil
-        work = Task {
+    func discover(loadMore:Bool=false) {
+        work?.cancel();let generation=UUID();searchGeneration=generation
+        let query=search.trimmingCharacters(in:.whitespacesAndNewlines)
+        work=Task {
             do {
-                try await Task.sleep(for:.milliseconds(400));try Task.checkCancellation();searching = true;message = nil
-                if !loadMore,let card = try? await client.model(ModelDescriptor.sarvam.provenance.repository!) {
-                    let pinned = HubModelCard(repository:card.repository,revision:ModelDescriptor.sarvam.provenance.revision!,downloads:card.downloads,likes:card.likes,license:card.license,files:card.files)
-                    let readme = try? await client.metadata(pinned,path:"README.md",limit:524_288)
-                    try Task.checkCancellation();guard searchGeneration == generation else {return}
-                    if let index = listings.firstIndex(where:{$0.isDefault}) {listings[index] = .init(descriptor:.sarvam,card:pinned,report:ArchitectureRegistry.report(.sarvam),readme:readme.map{Self.cardText($0)})}
-                }
-                let results:HubModelPage
-                if !loadMore,let repository=try? HubRepository.parse(query) {
-                    results=HubModelPage(models:[try await client.model(repository)],next:nil)
-                } else {results=try await client.search(query,next:page)}
-                guard searchGeneration == generation else {return}
-                // Retain cached cards until a replacement page succeeds, so
-                // an offline refresh never erases the browseable library.
-                if !loadMore {listings = listings.filter(\.isDefault);candidates=[]}
-                var summaries=results.models
-                let featured="Lifeboat78/Chronos-Ornith-1.5-35B-A3B-MLX-3bit"
-                if !loadMore,(query.isEmpty || featured.localizedCaseInsensitiveContains(query)),!summaries.contains(where:{$0.repository == featured}),
-                   let card=try? await client.model(featured,revision:"a982bb2ed776bf0db64375de480a1d0a00475a99") {summaries.insert(card,at:0)}
-                if !loadMore,query.isEmpty {
-                    for repository in ModelRecommendations.additionalRepositories where !summaries.contains(where:{$0.repository == repository}) {
-                        if let card=try? await client.model(repository) {summaries.insert(card,at:0)}
-                    }
-                }
-                let eligible=summaries.filter{$0.isMoECandidate || !query.isEmpty}
-                for card in eligible where !candidates.contains(where:{$0.id == card.id}) {candidates.append(.init(card:card))}
-                for summary in eligible {
+                try await Task.sleep(for:.milliseconds(400));try Task.checkCancellation()
+                if let retryAfter,retryAfter>Date() {throw ModelLibraryError.rateLimited(retryAfter)}
+                searching=true;message=nil;next=nil;candidates=[]
+                let requested=try? HubRepository.parse(query)
+                if let requested,ModelCatalog.entry(repository:requested) == nil {message=ModelCatalog.outsideCatalog;searching=false;return}
+                let entries=ModelCatalog.entries.filter{entry in requested.map{ModelCatalog.entry(repository:$0)?.id == entry.id} ?? entry.matches(query)}
+                for entry in entries {
                     try Task.checkCancellation()
-                    guard summary.repository != ModelDescriptor.sarvam.provenance.repository else {continue}
-                    // Search every MoE family. Unsupported graph adapters are
-                    // visible with a reason instead of disappearing silently.
-                    guard summary.isMoECandidate || !query.isEmpty else {continue}
-                    if !candidates.contains(where:{$0.id == summary.id}) {candidates.append(.init(card:summary))}
+                    let repository=requested ?? entry.repository
+                    catalogStatus[entry.id]="Checking checkpoint and runtime…"
                     do {
-                        let card = try await client.model(summary.repository,revision:summary.repository == featured ? "a982bb2ed776bf0db64375de480a1d0a00475a99" : nil)
-                        let report = try await client.inspect(card)
-                        try Task.checkCancellation();guard searchGeneration == generation else {return}
-                        if let index=candidates.firstIndex(where:{$0.id == summary.id}) {candidates[index].detail=report.reason;candidates[index].inspected=true}
-                        if report.installable,let descriptor = report.descriptor,!listings.contains(where: {$0.id == descriptor.id}) {
-                            let readme = try? await client.metadata(card,path:"README.md",limit:524_288)
-                            try Task.checkCancellation()
-                            listings.append(.init(descriptor:descriptor,card:card,report:report,readme:readme.map{Self.cardText($0)}))
-                        }
+                        let card=try await client.model(repository)
+                        if listings.contains(where:{$0.card?.repository == card.repository && $0.card?.revision == card.revision && $0.report.installable && ModelCatalog.allows($0.descriptor)}) {catalogStatus[entry.id]="Ready to install";continue}
+                        let report=try await client.inspect(card)
+                        try Task.checkCancellation();guard searchGeneration == generation else{return}
+                        if report.installable,let descriptor=report.descriptor,ModelCatalog.allows(descriptor) {
+                            let readme=try? await client.metadata(card,path:"README.md",limit:524_288)
+                            try Task.checkCancellation();guard searchGeneration == generation else{return}
+                            listings.removeAll{$0.id == descriptor.id};listings.append(.init(descriptor:descriptor,card:card,report:report,readme:readme.map{Self.cardText($0)}));catalogStatus[entry.id]="Ready to install"
+                        } else {catalogStatus[entry.id]=report.reason}
                     } catch is CancellationError {throw CancellationError()}
                     catch let error as ModelLibraryError {
-                        if case .rateLimited = error {throw error}
-                        if let index=candidates.firstIndex(where:{$0.id == summary.id}) {candidates[index].detail=error.localizedDescription;candidates[index].inspected=true}
-                    }
-                    catch {if let index=candidates.firstIndex(where:{$0.id == summary.id}) {candidates[index].detail=error.localizedDescription;candidates[index].inspected=true}}
+                        if case .rateLimited(let date)=error {retryAfter=date;throw error}
+                        catalogStatus[entry.id]=error.localizedDescription
+                    } catch {catalogStatus[entry.id]=error.localizedDescription}
                 }
-                next = results.next;searching = false
-                if candidates.isEmpty,!query.isEmpty {message = "No MoE repositories matched this page. Try the repository name or paste its Hugging Face link; Load more searches the next page."}
-                if !saveBlocked {try JSONEncoder().encode(listings).write(to:root.appendingPathComponent("model-library-cache.json"),options:.atomic)}
-            } catch is CancellationError {if searchGeneration == generation {searching = false}}
-            catch {
-                guard searchGeneration == generation else {return}
-                if let error = error as? ModelLibraryError,case .rateLimited(let date) = error {retryAfter = date}
-                message = error.localizedDescription;searching = false
-            }
+                if !saveBlocked {try JSONEncoder().encode(listings.filter{ModelCatalog.allows($0.descriptor)}).write(to:root.appendingPathComponent("model-library-cache.json"),options:.atomic)}
+                searching=false
+            } catch {if searchGeneration == generation {searching=false;if !(error is CancellationError) {message=error.localizedDescription}}}
         }
     }
     func inspectRepository() {
@@ -182,7 +151,7 @@ struct LibraryCandidate:Identifiable {
         let generation = UUID();searchGeneration = generation
         work = Task {
             do {
-                let repo = try HubRepository.parse(repository);searching = true;message = nil
+                let repo = try HubRepository.parse(repository);guard ModelCatalog.entry(repository:repo) != nil else {message=ModelCatalog.outsideCatalog;return};searching = true;message = nil
                 if repo == ModelDescriptor.sarvam.provenance.repository {message = "The default Sarvam release is available in Discover.";searching = false;return}
                 let card = try await client.model(repo),report = try await client.inspect(card)
                 guard searchGeneration == generation else {return}

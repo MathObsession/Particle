@@ -132,7 +132,7 @@ struct ParticleOneRootView: View {
     private var expertPicker: some View {
         VStack(alignment:.leading,spacing:12) {
             Text("Your models").font(Design.heading(20))
-            ForEach(model.library.installed){installed in
+            ForEach(model.library.installed.filter{ModelCatalog.allows($0.descriptor)}){installed in
                 Button{showingExperts=false;model.useInstalledModel(installed)}label:{
                     HStack{Text(installed.descriptor.name).font(Design.medium(12));Spacer();if installed.path == model.settings.modelPath{Image(systemName:"checkmark").foregroundStyle(Design.green)}}.padding(10).frame(maxWidth:.infinity,alignment:.leading).contentShape(Rectangle())
                 }.buttonStyle(.plain).disabled(model.busy || model.loading)

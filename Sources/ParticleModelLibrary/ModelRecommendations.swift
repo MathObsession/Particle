@@ -1,25 +1,18 @@
 import Foundation
 
-/// Editorial recommendations never bypass tensor inspection or runtime qualification.
+/// Recommendations are exactly the curated catalog; backend coverage cannot add entries.
 public enum ModelRecommendations {
-    public static let chronosRepository = "Lifeboat78/Chronos-Ornith-1.5-35B-A3B-MLX-3bit"
-    public static let additionalRepositories=["mlx-community/Qwen3-30B-A3B-4bit","mlx-community/Qwen3-30B-A3B-Instruct-2507-4bit","mlx-community/Mixtral-8x7B-Instruct-v0.1-4bit","mlx-community/gpt-oss-20b-MXFP4-Q8"]
-    public static func reason(for model: ModelDescriptor) -> String? {
-        if model.id == ModelDescriptor.sarvam.id {
-            return "Start here. Particle’s default assistant for everyday chat and coding."
-        }
-        if model.provenance.repository == chronosRepository {
-            return "An alternative for chat, with native 3-bit weights and streamed experts."
-        }
-        if additionalRepositories.contains(model.provenance.repository ?? "") {return model.graph == nil ? "An alternative for chat using native MLX weights." : "Automatically adapted from the backend graph. Check the memory and disk profile before installing."}
-        return nil
+    // Kept as a source compatibility constant for older tests/data migrations.
+    public static let chronosRepository="Lifeboat78/Chronos-Ornith-1.5-35B-A3B-MLX-3bit"
+    public static let additionalRepositories=ModelCatalog.entries.map(\.repository)
+    public static func reason(for model:ModelDescriptor)->String? {
+        guard let entry=ModelCatalog.entry(for:model) else{return nil}
+        return entry.fast ? "Fast collection · Actual speed depends on this Mac, storage and expert profile." : "Curated MoE model · Native quantization and configurable experts."
     }
-    public static func eligible(_ models: [ModelDescriptor]) -> [ModelDescriptor] {
-        models.filter { reason(for: $0) != nil && ArchitectureRegistry.report($0).installable }
-            .sorted { a,b in
-                if a.id == ModelDescriptor.sarvam.id { return b.id != a.id }
-                if b.id == ModelDescriptor.sarvam.id { return false }
-                return a.name.localizedCaseInsensitiveCompare(b.name) == .orderedAscending
-            }
+    public static func eligible(_ models:[ModelDescriptor])->[ModelDescriptor] {
+        models.filter{ModelCatalog.allows($0) && ArchitectureRegistry.report($0).installable}.sorted{a,b in
+            let order=ModelCatalog.entries.map(\.id)
+            return (order.firstIndex(of:ModelCatalog.entry(for:a)!.id) ?? 99)<(order.firstIndex(of:ModelCatalog.entry(for:b)!.id) ?? 99)
+        }
     }
 }

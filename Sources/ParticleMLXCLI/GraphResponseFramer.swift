@@ -53,3 +53,25 @@ struct GraphResponseFramer {
     }
     func text(decode:([Int])->String)->String {committed+(inBody && publicFrame ? decode(payload) : "")}
 }
+
+/// Gemma-style paired thought blocks. Detection is by tokenizer controls;
+/// hidden payloads are never committed to visible chat or historical replies.
+struct GraphThoughtFramer {
+    let opening:Int,closing:Int
+    private(set) var hidden=false
+    private(set) var analysisTokens=0
+    private var publicTokens=[Int]()
+    init?(opening:Int?,closing:Int?,prompt:[Int]) {
+        guard let opening,let closing,opening != closing else{return nil}
+        self.opening=opening;self.closing=closing
+        if let index=prompt.lastIndex(of:opening) {hidden=prompt.lastIndex(of:closing).map{index>$0} ?? true}
+    }
+    mutating func append(_ token:Int,decode:([Int])->String)->String {
+        if token == opening {hidden=true}
+        else if token == closing {hidden=false}
+        else if hidden {analysisTokens+=1}
+        else {publicTokens.append(token)}
+        return text(decode:decode)
+    }
+    func text(decode:([Int])->String)->String {decode(publicTokens)}
+}
