@@ -2,18 +2,26 @@
 
 Live: [particle-local.vercel.app](https://particle-local.vercel.app).
 
-Static marketing site matching the app’s ParticleDesign materials, PT Serif / Poppins / Space Mono, and #20241F dark appearance. Uses existing app PNG artwork and optimized WebP delivery. Fonts are self-hosted with their OFL notices. No analytics, cookies, remote fonts, API secrets or runtime dependencies.
+A compact static site: product preview, model selection and installation. The design follows Sarvam's restrained hierarchy and spacing while keeping Particle's mark and green palette. Uses self-hosted Newsreader / DM Sans, a single raster wash, and real Mac app captures with example content. No tracking, remote fonts, runtime dependencies or online inference demo.
 
 ## Build
 
-With Node 22 or newer, run `node Website/build.mjs`. Serve `Website/dist` locally with any static server. The build renders the fourteen curated model cards from `models.json`. Website cards open their public model source; installation happens inside the Mac app. Chat/Code panels are labelled interface previews, not an online inference service.
+Node 22 or newer: `node Website/build.mjs`. Serve `Website/dist` using a static server. `models.json` supplies the thirteen alternative model rows; Sarvam 30B remains the visible Default. Alternatives and installation details use native disclosure elements. The install/update command follows GitHub's latest release.
 
-## Vercel
+`prefers-color-scheme` controls the entire site's appearance and preview image, including live system changes. Dark background is #20241F. There is no theme toggle, theme script, stored theme or animation framework. The only JavaScript handles the copy button; reading, navigation, disclosures and appearance work without it.
 
-Project: `particle-local` (`prj_bqJdaBV9qYnLMaQWrsvOAebW3XV3`), in Lakshya Prajapati’s team. Git source: MathObsession/Particle. Root directory: `Website`; build: `node build.mjs`; output: `dist`; install command: empty. Production alias is public; previews and deployment URLs retain Vercel authentication. `vercel.json` supplies security headers and asset caching. Deployment system environment supplies canonical/Open Graph URLs. No credentials are required.
+## Assets
 
-The install/update command follows GitHub’s latest release, verifies the app archive through the published installer and preserves models and user data. Requirements and the current tester build’s notarization status are stated on the page.
+Newsreader and DM Sans come from [Google Fonts](https://github.com/google/fonts/tree/main/ofl), under their bundled OFL licenses. Latin WOFF2 subsets retain the required site punctuation. Newsreader uses weight 400 / optical size 48; DM Sans uses weights 400–600 / optical size 14. Existing app artwork supplies `wash.webp` and `logo.png`.
 
-## Checks
+App images are captured from the installed app using isolated temporary state and `--render-preview <path> --preview-chat --preview-compact-chat`; add `--preview-dark` for dark. No user chats or real inference are captured. Resize captures to 1600 pixels wide and encode WebP quality 82. Both images share 1600 × 1075 dimensions, avoiding layout shifts when the system theme changes.
 
-Desktop and mobile browser checks cover model filters/search, default identification, preview tabs, clipboard, FAQ, theme persistence, menu behavior, resource failures, JavaScript errors and horizontal overflow. Recheck these when changing interactions. Honor reduced motion and visible keyboard focus; no JavaScript is needed to read the static page or installation command.
+## Deployment
+
+Vercel project `particle-local` (`prj_bqJdaBV9qYnLMaQWrsvOAebW3XV3`), MathObsession/Particle Git source, root `Website`, build `node build.mjs`, output `dist`, empty install command. Production alias is public; deployment and preview URLs remain authenticated. `vercel.json` supplies security headers. Vercel's system environment supplies canonical/Open Graph URLs. No API keys required.
+
+## Review
+
+Desktop/mobile checks cover both system themes, live theme changes, obsolete stored preferences, preview image loading, disclosure lists, exact clipboard text, anchor targets, missing resources and horizontal overflow. The redesign removes the former theme controls, mock interactive app, feature-card grid, orbit art, slogan sections, giant footer banner, search/filter interface and unused assets. Mac app releases and user data are unchanged.
+
+Research: [Sarvam homepage](https://www.sarvam.ai/), [Venngage design critique](https://venngage.com/blog/ai-slop-in-design/), [Joshua Snoddy on repetitive AI websites](https://www.joshuasnoddy.com/blog/why-ai-websites-look-the-same/). These are design references, not evidence that a visual pattern proves AI authorship.

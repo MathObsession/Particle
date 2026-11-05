@@ -1,1 +1,13 @@
-{"name":"particle-website","version":"1.0.0","private":true,"type":"module","scripts":{"build":"node build.mjs","check":"node --check app.js && node --check theme.js && node build.mjs"},"engines":{"node":"22.x"}}
+{
+  "name": "particle-website",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs",
+    "check": "node --check app.js && node build.mjs"
+  },
+  "engines": {
+    "node": "22.x"
+  }
+}
