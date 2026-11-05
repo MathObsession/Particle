@@ -1,0 +1,17 @@
+{
+  "url": "https://particle-local.vercel.app",
+  "deployment": "dpl_AvmKn8Js9F7UrNA8hyuxtN83SWjf",
+  "sourceCommit": "198984ccfc57c99d8c825e00adcb6330c4213bfb",
+  "state": "READY",
+  "appReleaseUnchanged": "0.6.1",
+  "featuredModels": [
+    "Sarvam 30B (Default)",
+    "Nemotron",
+    "GPT-OSS-20B",
+    "Qwen3.6-35B-A3B"
+  ],
+  "benchmarkData": "https://particle-local.vercel.app/benchmarks.json",
+  "benchmarkSourceDate": "2026-10-25",
+  "newInferencePerformed": false,
+  "publicBrowserChecksPassed": true
+}
