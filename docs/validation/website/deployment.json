@@ -1,0 +1,15 @@
+{
+  "url": "https://particle-local.vercel.app",
+  "project": "particle-local",
+  "deployment": "dpl_FMGRuBF1qRZcBtumotfrkzYqAKBa",
+  "sourceCommit": "e28ddc5765ffc8995b18232e80cfdf915b8e3e90",
+  "state": "READY",
+  "publicHTTPStatus": 200,
+  "productionAliasPublic": true,
+  "previewAuthenticationPreserved": true,
+  "release": "v0.6.1",
+  "releaseBuild": "20261105162306",
+  "releaseSHA256": "127a8e01d9019afbde792d1c48ab1bdad64a2f8b3bcfdab35ba0c979117f961e",
+  "publicInstallerMatches": true,
+  "olderAppReleasesRemoved": true
+}

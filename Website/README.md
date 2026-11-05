@@ -1,5 +1,7 @@
 # Particle website
 
+Live: [particle-local.vercel.app](https://particle-local.vercel.app).
+
 Static marketing site matching the app’s ParticleDesign materials, PT Serif / Poppins / Space Mono, and #20241F dark appearance. Uses existing app PNG artwork and optimized WebP delivery. Fonts are self-hosted with their OFL notices. No analytics, cookies, remote fonts, API secrets or runtime dependencies.
 
 ## Build

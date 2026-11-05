@@ -1,0 +1,29 @@
+{
+  "base": "https://particle-local.vercel.app",
+  "results": [
+    {
+      "viewport": "desktop",
+      "overflow": false,
+      "javascript_errors": [],
+      "model_count": 14,
+      "fast_count": 3,
+      "default_sarvam": true,
+      "copy_command": true,
+      "filters": true,
+      "preview_modes": true,
+      "faq": true
+    },
+    {
+      "viewport": "mobile",
+      "overflow": false,
+      "javascript_errors": [],
+      "model_count": 14,
+      "fast_count": 3,
+      "default_sarvam": true,
+      "copy_command": true,
+      "filters": true,
+      "preview_modes": true,
+      "faq": true
+    }
+  ]
+}

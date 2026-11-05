@@ -9,6 +9,7 @@ Particle is a native, local AI workspace for Apple Silicon Macs, created by Laks
 
 The SwiftUI app uses a green, grain-textured ParticleDesign interface with PT Serif, Poppins, and Space Mono. It stores conversations and memories locally, supports multiple workspaces, and shares one warm inference worker between chat and coding.
 
+- [Particle website](https://particle-local.vercel.app)
 - [Website source and deployment](Website/README.md)
 - [Desktop setup and usage](docs/particleone/README.md)
 - [Coding agent capabilities and permissions](docs/particleone/code/README.md)
