@@ -82,3 +82,8 @@ __pycache__/
 
 # Development build symlink
 .build
+
+# Public website build output and Vercel checkout context
+/Website/dist/
+/Website/.vercel/
+/Website/node_modules/

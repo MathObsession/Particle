@@ -7,6 +7,7 @@ public enum ModelCatalog {
         public let id:String,name:String,repository:String,official:String,type:String
         public let hidden:Int,layers:Int,experts:Int
         public let fast:Bool
+        public var isDefault:Bool {id == "sarvam"}
         public var matchesSearch:String {(name+" "+repository+" "+official).lowercased()}
         public func matches(_ query:String)->Bool {
             let terms=query.lowercased().split(whereSeparator:{$0.isWhitespace})
@@ -14,6 +15,7 @@ public enum ModelCatalog {
         }
     }
     public static let entries:[Entry] = [
+        .init(id:"sarvam",name:"Sarvam 30B",repository:"MathObsession/sarvam-30b-particle",official:"sarvamai/sarvam-30b",type:"sarvam_moe",hidden:4096,layers:19,experts:128,fast:false),
         .init(id:"qwen36",name:"Qwen3.6-35B-A3B",repository:"mlx-community/Qwen3.6-35B-A3B-4bit",official:"Qwen/Qwen3.6-35B-A3B",type:"qwen3_5_moe",hidden:2048,layers:40,experts:256,fast:false),
         .init(id:"qwen3-coder",name:"Qwen3-Coder-30B-A3B",repository:"mlx-community/Qwen3-Coder-30B-A3B-Instruct-4bit",official:"Qwen/Qwen3-Coder-30B-A3B-Instruct",type:"qwen3_moe",hidden:2048,layers:48,experts:128,fast:false),
         .init(id:"glm47",name:"GLM-4.7-Flash",repository:"mlx-community/GLM-4.7-Flash-4bit",official:"zai-org/GLM-4.7-Flash",type:"glm4_moe_lite",hidden:2048,layers:47,experts:64,fast:false),
@@ -32,7 +34,7 @@ public enum ModelCatalog {
         guard entry(configuration:configuration,repository:repository)?.id == "deepseek-moe" else{return nil}
         return "{{ bos_token }}{% for message in messages %}{% if message['role'] == 'user' %}{{ 'User: ' + message['content'] + '\\n\\n' }}{% elif message['role'] == 'assistant' %}{{ 'Assistant: ' + message['content'] + eos_token + '\\n' }}{% else %}{{ message['content'] + '\\n\\n' }}{% endif %}{% endfor %}{% if add_generation_prompt %}{{ 'Assistant:' }}{% endif %}"
     }
-    public static let outsideCatalog="This model is outside Particle’s curated library. Choose one of the ten main models or three Fast models. Existing files and conversations are preserved."
+    public static let outsideCatalog="This model is outside Particle’s curated library. Choose the default Sarvam 30B model, ten other main models, or three Fast models. Existing files and conversations are preserved."
     public static func entry(repository:String)->Entry? {
         let repo=repository.lowercased()
         return entries.first { entry in
@@ -57,6 +59,7 @@ public enum ModelCatalog {
         return candidates.first(where:{$0.id == "qwen3"}) ?? candidates.first
     }
     public static func entry(for descriptor:ModelDescriptor)->Entry? {
+        if descriptor.architecture == .sarvam,descriptor.layers == 19,descriptor.experts == 128 {return entries.first}
         let entry=descriptor.provenance.repository.flatMap{self.entry(repository:$0)} ?? (descriptor.provenance.repository == nil ? entries.first{$0.id == descriptor.catalogID} : nil)
         guard let entry,descriptor.layers == entry.layers,descriptor.experts == entry.experts else{return nil}
         return entry

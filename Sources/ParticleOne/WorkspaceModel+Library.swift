@@ -17,7 +17,7 @@ extension WorkspaceModel {
     var currentSystemPrompt: String {state.systemPrompt(model:selectedModelDescriptor)}
     func prepareConversationModel(_ id: String?, requireTools: Bool = false) -> Bool {
         let id = id ?? ModelDescriptor.sarvam.id
-        if !preview {guard let value=library.installed.first(where:{$0.id == id}),ModelCatalog.allows(value.descriptor) else {notice=ModelCatalog.outsideCatalog;showModelLibrary=true;return false}}
+        if !preview {guard (id == ModelDescriptor.sarvam.id && library.installed.first(where:{$0.id == id}) == nil) || library.installed.contains(where:{$0.id == id && ModelCatalog.allows($0.descriptor)}) else {notice=ModelCatalog.outsideCatalog;showModelLibrary=true;return false}}
         if requireTools {
             let descriptor = library.installed.first(where:{$0.id == id})?.descriptor ?? .sarvam
             guard descriptor.supportsTools else {notice = "This session’s model has not qualified for coding tools.";return false}

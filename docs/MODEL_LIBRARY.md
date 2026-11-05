@@ -1,11 +1,12 @@
 # Curated MoE model library
 
-Particle 0.6.0 replaces open-ended model support with the exact collection requested on 5 November 2026. Search filters these entries and accepts only approved source/quantization variants; it no longer searches arbitrary Hugging Face models. Graph availability cannot add models to the product catalog.
+Particle 0.6.1 offers Sarvam 30B as Default, ten other main models, and three Fast models. Open-ended model support remains removed. Search filters these entries and accepts only approved source/quantization variants; it no longer searches arbitrary Hugging Face models. Graph availability cannot add models to the product catalog.
 
 ## Models
 
 | Model | Preferred source |
 | --- | --- |
+| **Sarvam 30B · Default** | [MathObsession/sarvam-30b-particle](https://huggingface.co/MathObsession/sarvam-30b-particle) |
 | Qwen3.6-35B-A3B | [mlx-community/Qwen3.6-35B-A3B-4bit](https://huggingface.co/mlx-community/Qwen3.6-35B-A3B-4bit) |
 | Qwen3-Coder-30B-A3B | [mlx-community/Qwen3-Coder-30B-A3B-Instruct-4bit](https://huggingface.co/mlx-community/Qwen3-Coder-30B-A3B-Instruct-4bit) |
 | GLM-4.7-Flash | [mlx-community/GLM-4.7-Flash-4bit](https://huggingface.co/mlx-community/GLM-4.7-Flash-4bit) |
@@ -41,9 +42,9 @@ Each installed supported model has its own expert count, cache, read workers, pr
 
 ## Existing installations
 
-Sarvam/Churo, Chronos, Mixtral and other models outside the collection are no longer offered or selectable. Their files, registry entries and conversations are retained; Installed explains the change and still allows removal. First launch opens the curated library instead of automatically downloading Sarvam. No old model files or chats are deleted during the catalog change.
+The original Sarvam backend and pinned, verified v1 pack are restored as Default. Churo Chat and Churo Code retain their existing prompts, formatting, expert settings and worker. Existing Sarvam paths register in place without copying weights. Chronos, Mixtral and other models outside the collection remain unavailable for selection. Their files, registry entries and conversations are retained; Installed explains the change and still allows removal. First launch opens the curated library instead of automatically downloading Sarvam. No old model files or chats are deleted during the catalog change.
 
-The existing ParticleDesign PNG grain/wash materials, green palette, PT Serif/Poppins/Space Mono and dark background remain in use. All thirteen entries are visible immediately; Install appears only after inspection passes. Cached compatible revisions avoid repeating tensor-header inspection during ordinary browsing.
+The existing ParticleDesign PNG grain/wash materials, green palette, PT Serif/Poppins/Space Mono and dark background remain in use. All fourteen entries are visible immediately; Install appears only after inspection passes. Cached compatible revisions avoid repeating tensor-header inspection during ordinary browsing.
 
 ## Evidence and limits
 

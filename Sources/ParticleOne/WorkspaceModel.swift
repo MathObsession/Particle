@@ -112,9 +112,10 @@ final class DesktopPipeReader: @unchecked Sendable {
     }
     func inspectModel() {
         guard !preview else { return }
+        if settings.modelID == ModelDescriptor.sarvam.id,Self.modelExists(settings.modelPath) {library.rememberExistingSarvam(settings.modelPath,settings:settings);return}
         if let installed=library.installed.first(where:{$0.id == settings.modelID && $0.path == settings.modelPath}),ModelCatalog.allows(installed.descriptor),Self.modelExists(installed.path) {return}
         // Keep every old transcript/model, but never automatically download a
-        // model outside the newly requested collection on first launch.
+        // model before the user selects Install on first launch.
         showModelLibrary=true
     }
 

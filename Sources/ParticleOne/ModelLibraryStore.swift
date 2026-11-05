@@ -50,7 +50,7 @@ struct LibraryCandidate:Identifiable {
     init(root: URL) {
         self.root = root
         let standard = LibraryListing(descriptor:.sarvam,card:nil,report:ArchitectureRegistry.report(.sarvam))
-        listings = []
+        listings = [standard]
         do {
             registry = try InstalledModelRegistry.load(from:root.appendingPathComponent("installed-models.json"))
         } catch {saveBlocked = true;message = "The installed-model registry could not be opened. Existing records and weights have been preserved. \(error.localizedDescription)"}
@@ -126,6 +126,13 @@ struct LibraryCandidate:Identifiable {
                     let repository=requested ?? entry.repository
                     catalogStatus[entry.id]="Checking checkpoint and runtime…"
                     do {
+                        if entry.isDefault {
+                            let card=try await client.model(repository,revision:ModelDescriptor.sarvam.provenance.revision)
+                            let readme=try? await client.metadata(card,path:"README.md",limit:524_288)
+                            try Task.checkCancellation();guard searchGeneration == generation else{return}
+                            listings.removeAll{$0.isDefault};listings.insert(.init(descriptor:.sarvam,card:card,report:ArchitectureRegistry.report(.sarvam),readme:readme.map{Self.cardText($0)}),at:0)
+                            catalogStatus[entry.id]="Default · Ready to install";continue
+                        }
                         let card=try await client.model(repository)
                         if listings.contains(where:{$0.card?.repository == card.repository && $0.card?.revision == card.revision && $0.report.installable && ModelCatalog.allows($0.descriptor)}) {catalogStatus[entry.id]="Ready to install";continue}
                         let report=try await client.inspect(card)

@@ -128,3 +128,12 @@ Evidence: `curated-0.6.0/catalog-metadata-checks.json` and
 Packaged compiler/PyTorch inspection and Metal reference checks passed without
 developer paths. The thirteen-model cached library rendered successfully.
 Release build `20261105145326`; archive SHA-256 `01d891fc00d43fd7eb3f5d31230ab11118984b547d9dbea7be9db4ab79a90c29`.
+
+
+## 0.6.1: Sarvam Default and website, 5 November 2026
+
+Restored the original Sarvam 30B adapter and pinned public v1 model pack as Default, alongside the thirteen curated alternatives. Existing Sarvam paths register without a payload copy; existing selected models, expert preferences and transcripts remain intact. The default uses the established installer and qualified Churo Chat/Code workflow, not the new graph converter. Fresh installations require an explicit Install selection.
+
+Release build `20261105162306`; archive SHA-256 `127a8e01d9019afbde792d1c48ab1bdad64a2f8b3bcfdab35ba0c979117f961e`. Release build, fourteen focused catalog boundary assertions and both SwiftUI source/probe guards passed. Package code signatures and installed version were verified. No new full-model download or performance benchmark was required for restoring the existing backend.
+
+The ParticleDesign website includes the current install/update command, curated model cards and accurate system requirements. Desktop/mobile browser checks passed: filters, search, default badge, clipboard, preview tabs, FAQ, mobile navigation, theme persistence, no horizontal overflow and no JavaScript errors. Artwork and fonts are self-hosted.

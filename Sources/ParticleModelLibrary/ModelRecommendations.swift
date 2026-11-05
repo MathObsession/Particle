@@ -7,6 +7,7 @@ public enum ModelRecommendations {
     public static let additionalRepositories=ModelCatalog.entries.map(\.repository)
     public static func reason(for model:ModelDescriptor)->String? {
         guard let entry=ModelCatalog.entry(for:model) else{return nil}
+        if entry.isDefault {return "Default · Sarvam 30B powers Churo Chat and Churo Code, with native .particle streaming."}
         return entry.fast ? "Fast collection · Actual speed depends on this Mac, storage and expert profile." : "Curated MoE model · Native quantization and configurable experts."
     }
     public static func eligible(_ models:[ModelDescriptor])->[ModelDescriptor] {

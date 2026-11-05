@@ -1,0 +1,100 @@
+[
+  {
+    "name": "Sarvam 30B",
+    "group": "default",
+    "capability": "Chat + Code",
+    "quantization": "Q4_K_M",
+    "url": "https://huggingface.co/MathObsession/sarvam-30b-particle"
+  },
+  {
+    "name": "Qwen3.6-35B-A3B",
+    "group": "main",
+    "capability": "Chat",
+    "quantization": "MLX 4-bit",
+    "url": "https://huggingface.co/mlx-community/Qwen3.6-35B-A3B-4bit"
+  },
+  {
+    "name": "Qwen3-Coder-30B-A3B",
+    "group": "main",
+    "capability": "Chat",
+    "quantization": "MLX 4-bit",
+    "url": "https://huggingface.co/mlx-community/Qwen3-Coder-30B-A3B-Instruct-4bit"
+  },
+  {
+    "name": "GLM-4.7-Flash",
+    "group": "main",
+    "capability": "Chat",
+    "quantization": "MLX 4-bit",
+    "url": "https://huggingface.co/mlx-community/GLM-4.7-Flash-4bit"
+  },
+  {
+    "name": "Nemotron 3.5 Lightning",
+    "group": "main",
+    "capability": "Chat",
+    "quantization": "MLX 4-bit",
+    "url": "https://huggingface.co/mlx-community/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit"
+  },
+  {
+    "name": "Qwen3 Thinking 2507",
+    "group": "main",
+    "capability": "Chat",
+    "quantization": "MLX 4-bit",
+    "url": "https://huggingface.co/mlx-community/Qwen3-30B-A3B-Thinking-2507-4bit"
+  },
+  {
+    "name": "Qwen3 Instruct 2507",
+    "group": "main",
+    "capability": "Chat",
+    "quantization": "MLX 4-bit",
+    "url": "https://huggingface.co/mlx-community/Qwen3-30B-A3B-Instruct-2507-4bit"
+  },
+  {
+    "name": "Gemma 4 26B-A4B",
+    "group": "main",
+    "capability": "Chat",
+    "quantization": "MLX 4-bit",
+    "url": "https://huggingface.co/mlx-community/gemma-4-26b-a4b-it-4bit"
+  },
+  {
+    "name": "Qwen3-30B-A3B",
+    "group": "main",
+    "capability": "Chat",
+    "quantization": "MLX 4-bit",
+    "url": "https://huggingface.co/mlx-community/Qwen3-30B-A3B-4bit"
+  },
+  {
+    "name": "GPT-OSS-20B",
+    "group": "main",
+    "capability": "Chat",
+    "quantization": "MXFP4",
+    "url": "https://huggingface.co/mlx-community/gpt-oss-20b-MXFP4-Q8"
+  },
+  {
+    "name": "DeepSeek Coder V2 Lite",
+    "group": "main",
+    "capability": "Chat",
+    "quantization": "MLX 4-bit",
+    "url": "https://huggingface.co/mlx-community/DeepSeek-Coder-V2-Lite-Instruct-4bit"
+  },
+  {
+    "name": "Qwen1.5-MoE-A2.7B",
+    "group": "fast",
+    "capability": "Chat",
+    "quantization": "MLX 4-bit",
+    "url": "https://huggingface.co/mlx-community/Qwen1.5-MoE-A2.7B-Chat-4bit"
+  },
+  {
+    "name": "DeepSeekMoE-16B-Chat",
+    "group": "fast",
+    "capability": "Chat",
+    "quantization": "MLX 4-bit",
+    "url": "https://huggingface.co/BlueMoonlight/deepseek-moe-16b-chat-mlx-4Bit"
+  },
+  {
+    "name": "MiniCPM-MoE-8x2B",
+    "group": "fast",
+    "capability": "Chat",
+    "quantization": "Original BF16",
+    "url": "https://huggingface.co/openbmb/MiniCPM-MoE-8x2B"
+  }
+]

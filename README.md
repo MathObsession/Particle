@@ -9,12 +9,13 @@ Particle is a native, local AI workspace for Apple Silicon Macs, created by Laks
 
 The SwiftUI app uses a green, grain-textured ParticleDesign interface with PT Serif, Poppins, and Space Mono. It stores conversations and memories locally, supports multiple workspaces, and shares one warm inference worker between chat and coding.
 
+- [Website source and deployment](Website/README.md)
 - [Desktop setup and usage](docs/particleone/README.md)
 - [Coding agent capabilities and permissions](docs/particleone/code/README.md)
 - [Building from source](docs/BUILDING_PARTICLE.md)
 - [Model library, lossless conversion and adapter status](docs/MODEL_LIBRARY.md)
 
-Particle 0.6.0 offers a curated collection of ten main MoE models and three **Fast**
+Particle 0.6.1 restores **Sarvam 30B as Default**, alongside ten other main MoE models and three **Fast**
 models, with restricted search, verified `.particle` conversion and per-model expert
 controls. Open-ended model admission has been removed. Existing model files and
 conversations are preserved. See the [model library and supported sources](docs/MODEL_LIBRARY.md).
@@ -32,8 +33,8 @@ curl -fsSL https://github.com/MathObsession/Particle/releases/latest/download/in
 ```
 
 The installer downloads and verifies the prebuilt app, installs it in
-`~/Applications/Particle.app`, and opens it. The app downloads the approximately
-19.6 GB Churo model on first launch; allow 22 GB free for the model plus app space.
+`~/Applications/Particle.app`, and opens it. Choose Install for the default Sarvam 30B model in the library (approximately
+19.6 GB; allow 22 GB free plus app space), or select a compatible alternative.
 This tester build is not Apple-notarized: if macOS blocks opening, use
 System Settings → Privacy & Security → Open Anyway. The installer keeps macOS
 security checks enabled. [Installation details and limits](docs/particleone/TESTER_INSTALL.md).

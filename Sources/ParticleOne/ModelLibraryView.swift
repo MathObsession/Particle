@@ -65,7 +65,7 @@ struct ModelLibraryView: View {
                 if !entries.isEmpty {
                     VStack(alignment:.leading,spacing:5) {
                         Text(fast ? "Fast" : "Models").font(Design.heading(23))
-                        Text(fast ? "Smaller active workloads. Speed still depends on your Mac and storage." : "The ten selected models, with verified conversion before installation.").font(Design.body(11)).foregroundStyle(Design.muted)
+                        Text(fast ? "Smaller active workloads. Speed still depends on your Mac and storage." : "Sarvam 30B is the default. Explore ten other selected models, or the Fast collection.").font(Design.body(11)).foregroundStyle(Design.muted)
                     }.padding(.top,fast ? 12 : 0)
                     ForEach(entries) {entry in
                         let matches=library.listings.filter{ModelCatalog.entry(for:$0.descriptor)?.id == entry.id}

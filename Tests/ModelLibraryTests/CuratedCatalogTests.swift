@@ -3,12 +3,13 @@ import Testing
 @testable import ParticleModelLibrary
 
 @Suite("Curated model boundary") struct CuratedCatalogTests {
-    @Test func collectionIsExactlyTenMainAndThreeFast() {
-        #expect(ModelCatalog.entries.count == 13)
-        #expect(ModelCatalog.entries.filter{!$0.fast}.count == 10)
+    @Test func collectionHasSarvamDefaultTenMainAndThreeFast() {
+        #expect(ModelCatalog.entries.count == 14)
+        #expect(ModelCatalog.entries.filter{!$0.fast}.count == 11)
         #expect(ModelCatalog.entries.filter(\.fast).map(\.id) == ["qwen15","deepseek-moe","minicpm"])
-        #expect(Set(ModelCatalog.entries.map(\.id)).count == 13)
-        #expect(!ModelCatalog.allows(.sarvam))
+        #expect(Set(ModelCatalog.entries.map(\.id)).count == 14)
+        #expect(ModelCatalog.allows(.sarvam))
+        #expect(ModelCatalog.entries.first?.isDefault == true)
     }
     @Test func checkpointVariantsCannotSmuggleUnrelatedModels() {
         #expect(ModelCatalog.entry(repository:"mlx-community/Qwen3-30B-A3B-Thinking-2507-4bit")?.id == "qwen3-thinking")
